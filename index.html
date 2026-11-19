@@ -73,6 +73,11 @@ a { color: inherit; }
 .masthead { padding-block: 28px 18px; }
 .masthead-row { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: flex-end; justify-content: space-between; }
 .masthead h1 { font-size: clamp(32px, 5vw, 46px); line-height: 1; }
+/* The two sheet titles are the switch: the current sheet reads as the title, the other as a quieter link. */
+.sheet-switch { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 20px; }
+.sheet-switch button { font: inherit; letter-spacing: inherit; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; font-size: 0.55em; border-bottom: 2px solid transparent; }
+.sheet-switch button:hover { color: var(--ink); border-bottom-color: var(--accent); }
+.sheet-switch button[aria-pressed="true"] { color: var(--ink); font-size: 1em; cursor: default; border-bottom-color: transparent; order: -1; }
 .dek { color: var(--ink-2); max-width: 62ch; margin-top: 8px; font-size: 15px; }
 .status-line { display: flex; flex-wrap: wrap; gap: 6px; }
 .status-chip { background: var(--chip); color: var(--ink-2); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500; white-space: nowrap; }
@@ -220,8 +225,11 @@ footer p { max-width: 95ch; }
     <div class="masthead-row">
       <div>
         <p class="eyebrow">Ranked Solo/Duo · bot lane</p>
-        <h1>Support Counter Sheet</h1>
-        <p class="dek">Which support to pick into an enemy ADC. Every number is adjusted for the rest of the draft, the enemy support, autofill, champion experience and elo, and comes with an honest interval.</p>
+        <h1 class="sheet-switch" id="sheet-switch">
+          <button type="button" data-sheet="support" aria-pressed="true">Support Counter Sheet</button>
+          <button type="button" data-sheet="adc" aria-pressed="false">ADC Counter Sheet</button>
+        </h1>
+        <p class="dek" id="sheet-dek">Which support to pick into an enemy ADC. Every number is adjusted for the rest of the draft, the enemy support, autofill, champion experience and elo, and comes with an honest interval.</p>
       </div>
       <div class="status-line" id="status-line"></div>
     </div>
@@ -285,12 +293,12 @@ footer p { max-width: 95ch; }
       <div class="champion-grid" id="champion-grid" role="group" aria-labelledby="picker-label"></div>
     </div>
     <div class="duo-pickers" id="duo-pickers" hidden>
-      <label><span class="eyebrow">Your ADC</span><select id="duo-my-bot"></select></label>
+      <label><span class="eyebrow" id="duo-my-label">Your ADC</span><select id="duo-my-bot"></select></label>
       <label><span class="eyebrow">Enemy ADC</span><select id="duo-enemy-bot"></select></label>
       <label><span class="eyebrow">Enemy support</span><select id="duo-enemy-support"></select></label>
     </div>
     <div class="duo-pickers" id="blind-options" hidden>
-      <label><span class="eyebrow">Your ADC</span><select id="blind-my-bot"></select></label>
+      <label><span class="eyebrow" id="blind-partner-label">Your ADC</span><select id="blind-my-bot"></select></label>
       <label><span class="eyebrow">Awful outcome means</span><select id="blind-tail">
         <option value="0.05">Your worst 5% of lanes</option>
         <option value="0.1">Your worst 10% of lanes</option>
@@ -363,6 +371,7 @@ footer p { max-width: 95ch; }
 "use strict";
 
 const state = {
+  sheet: "support",             // "support" (rows are supports) or "adc" (rows are ADCs)
   perspective: "pick",
   region: "NA",
   bracket: "diamond_plus",
@@ -377,10 +386,15 @@ const state = {
   blindPool: [201, 267, 53, 25],  // Braum, Nami, Blitzcrank, Morgana
   blindMyBot: "any",
   blindTail: 0.1,
+  // ADC sheet: your support in the 2v2 and blind views, and your ADC pool.
+  duoMySupport: "any",
+  blindAdcPool: [222, 51, 81, 22],  // Jinx, Caitlyn, Ezreal, Ashe
+  blindMySupport: "any",
 };
 let data = null;
 const STORAGE_KEY = "support-counter-sheet-filters-v3";
 const POOL_STORAGE_KEY = "support-counter-sheet-blind-pool-v1";
+const ADC_POOL_STORAGE_KEY = "support-counter-sheet-blind-adc-pool-v1";
 const MINUS = "−";
 const LOW_DATA_GAMES = 60;
 
@@ -398,6 +412,10 @@ const elements = {
   blindOptions: document.getElementById("blind-options"),
   blindMyBot: document.getElementById("blind-my-bot"),
   blindTail: document.getElementById("blind-tail"),
+  duoMyLabel: document.getElementById("duo-my-label"),
+  blindPartnerLabel: document.getElementById("blind-partner-label"),
+  sheetSwitch: document.getElementById("sheet-switch"),
+  sheetDek: document.getElementById("sheet-dek"),
   tooltip: document.getElementById("tooltip"),
   statusLine: document.getElementById("status-line"),
   notice: document.getElementById("preliminary-notice"),
@@ -441,19 +459,42 @@ function niceLimit(value) {
 }
 function saveFilters() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ perspective: state.perspective, region: state.region, metric: state.metric, detail: state.detail }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sheet: state.sheet, perspective: state.perspective, region: state.region, metric: state.metric, detail: state.detail }));
   } catch (error) { /* storage unavailable: filters just won't persist */ }
 }
 function restoreFilters() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
-    for (const key of ["perspective", "region", "metric", "detail"]) if (saved[key]) state[key] = saved[key];
+    for (const key of ["sheet", "perspective", "region", "metric", "detail"]) if (saved[key]) state[key] = saved[key];
     const savedPool = JSON.parse(localStorage.getItem(POOL_STORAGE_KEY) || "null");
     if (Array.isArray(savedPool)) state.blindPool = savedPool.map(Number);
+    const savedAdcPool = JSON.parse(localStorage.getItem(ADC_POOL_STORAGE_KEY) || "null");
+    if (Array.isArray(savedAdcPool)) state.blindAdcPool = savedAdcPool.map(Number);
   } catch (error) { /* ignore unreadable storage */ }
 }
 function savePool() {
-  try { localStorage.setItem(POOL_STORAGE_KEY, JSON.stringify(state.blindPool)); } catch (error) { /* storage unavailable */ }
+  try {
+    localStorage.setItem(POOL_STORAGE_KEY, JSON.stringify(state.blindPool));
+    localStorage.setItem(ADC_POOL_STORAGE_KEY, JSON.stringify(state.blindAdcPool));
+  } catch (error) { /* storage unavailable */ }
+}
+
+// ---------------------------------------------------------------- which sheet
+// Support sheet: rows are supports. ADC sheet: the same views with your ADC as the row.
+function isAdcSheet() { return state.sheet === "adc"; }
+function rowRole() { return isAdcSheet() ? "bot" : "support"; }
+function roleWord(role) { return role === "support" ? "support" : "ADC"; }
+function idsForRole(source, role) { return role === "support" ? source.supports : source.bots; }
+function weightsForRole(source, role) { return role === "support" ? source.supportWeights : source.botWeights; }
+function currentPool() { return isAdcSheet() ? state.blindAdcPool : state.blindPool; }
+function setCurrentPool(pool) { if (isAdcSheet()) state.blindAdcPool = pool; else state.blindPool = pool; }
+function selectionKey() { return `${state.sheet}|${state.perspective}|${groupMode() ? "groups" : "champions"}`; }
+// [games, win rate] flipped to [column][row]; invertWinRate when the other side's team is reported.
+function transposeRaw(gamesMatrix, winRateMatrix, invertWinRate) {
+  const games = gamesMatrix[0].map((unused, columnIndex) => gamesMatrix.map((row) => row[columnIndex]));
+  const winRate = winRateMatrix[0].map((unused, columnIndex) => winRateMatrix.map((row) =>
+    row[columnIndex] === null ? null : (invertWinRate ? 1 - row[columnIndex] : row[columnIndex])));
+  return { games, winRate };
 }
 
 // ---------------------------------------------------------------- champions or groups
@@ -463,10 +504,19 @@ function groupMode() {
   const view = currentView();
   return state.detail === "groups" && !!(view && view.groups);
 }
+// The ADC sheet's raw tables are [your ADC][column]: ADC vs ADC comes from the export; ADC vs enemy
+// support and ADC with own support are the support tables turned around.
+function withAdcRaw(raw) {
+  const botSupportVersus = transposeRaw(raw.versus_games, raw.versus_win_rate, true);
+  const botWith = transposeRaw(raw.with_games, raw.with_win_rate, false);
+  return { ...raw,
+    bot_support_versus_games: botSupportVersus.games, bot_support_versus_win_rate: botSupportVersus.winRate,
+    bot_with_games: botWith.games, bot_with_win_rate: botWith.winRate };
+}
 function championSource() {
   const view = currentView();
   return { kind: "champions", bots: data.bots, supports: data.supports, botWeights: view.bot_weights,
-    supportWeights: view.support_weights, tables: view.tables, raw: view.raw };
+    supportWeights: view.support_weights, tables: view.tables, raw: withAdcRaw(view.raw) };
 }
 function currentSource() {
   if (!groupMode()) return championSource();
@@ -476,9 +526,10 @@ function currentSource() {
     bots: groups.bot_groups.map((group, groupIndex) => groupIndex),
     supports: groups.support_groups.map((group, groupIndex) => groupIndex),
     botWeights: groups.bot_weights, supportWeights: groups.support_weights, tables: groups.tables,
-    raw: { versus_games: groups.raw.versus.games, versus_win_rate: groups.raw.versus.win_rate,
+    raw: withAdcRaw({ versus_games: groups.raw.versus.games, versus_win_rate: groups.raw.versus.win_rate,
       with_games: groups.raw.with.games, with_win_rate: groups.raw.with.win_rate,
-      support_versus_games: groups.raw.support_versus.games, support_versus_win_rate: groups.raw.support_versus.win_rate },
+      support_versus_games: groups.raw.support_versus.games, support_versus_win_rate: groups.raw.support_versus.win_rate,
+      bot_versus_games: groups.raw.bot_versus.games, bot_versus_win_rate: groups.raw.bot_versus.win_rate }),
     botGroups: groups.bot_groups, supportGroups: groups.support_groups,
   };
 }
@@ -509,23 +560,31 @@ function rowsForSingleChampion(perspective, championId) {
   const source = currentSource();
   const tables = source.tables;
   const flip = perspective === "threats";
-  // Which tables each view reads: rows are always your support (or support group); the selected
-  // opponent is an ADC (pick, threats), your own ADC (partner) or the enemy support (support).
-  const tableNames = {
+  // Which tables each view reads. Support sheet: rows are your support (or support group); the
+  // selected opponent is an ADC (pick, threats), your own ADC (partner) or the enemy support (support).
+  // ADC sheet: rows are your ADC; the selected one is the enemy ADC (pick), your ADC (threats, rows
+  // are then enemy ADCs), your own support (partner) or the enemy support (support).
+  const tableNames = (isAdcSheet() ? {
+    pick: ["adc_pick_into", "adc_counter", "adc_expected", "bot_versus"],
+    threats: ["adc_pick_into", "adc_counter", "adc_expected", "bot_versus"],
+    partner: ["adc_synergy_pick", "adc_synergy_pure", null, "bot_with"],
+    support: ["adc_support_pick_into", "adc_support_counter", "adc_support_expected", "bot_support_versus"],
+  } : {
     pick: ["pick_into", "counter", "expected", "versus"],
     threats: ["pick_into", "counter", "expected", "versus"],
     partner: ["synergy_pick", "synergy_pure", null, "with"],
     support: ["support_pick_into", "support_counter", "support_expected", "support_versus"],
-  }[perspective];
+  })[perspective];
   const [edgeTableName, counterTableName, expectedTableName, rawName] = tableNames;
-  const championIndex = (perspective === "support" ? source.supports : source.bots).indexOf(championId);
+  const rowIds = idsForRole(source, rowRole());
+  const championIndex = idsForRole(source, pickerRole()).indexOf(championId);
   const edgeTable = tables[edgeTableName];
   const counterTable = tables[counterTableName];
   const expectedTable = expectedTableName ? tables[expectedTableName] : null;
   const rawGames = source.raw[`${rawName}_games`];
   const rawWinRate = source.raw[`${rawName}_win_rate`];
-  // Site-style "delta": raw WR in this pairing minus the support's raw WR across all pairings.
-  const overallRawWinRate = source.supports.map((supportId, supportIndex) => {
+  // Site-style "delta": raw WR in this pairing minus the row champion's raw WR across all pairings.
+  const overallRawWinRate = rowIds.map((rowId, supportIndex) => {
     let gamesTotal = 0;
     let winsTotal = 0;
     rawGames[supportIndex].forEach((games, botIndex) => {
@@ -536,7 +595,7 @@ function rowsForSingleChampion(perspective, championId) {
     });
     return gamesTotal > 0 ? winsTotal / gamesTotal : null;
   });
-  return source.supports.map((supportId, supportIndex) => {
+  return rowIds.map((rowId, supportIndex) => {
     const sign = flip ? -1 : 1;
     const edgeLow = flip ? -edgeTable.high[supportIndex][championIndex] : edgeTable.low[supportIndex][championIndex];
     const edgeHigh = flip ? -edgeTable.low[supportIndex][championIndex] : edgeTable.high[supportIndex][championIndex];
@@ -553,7 +612,7 @@ function rowsForSingleChampion(perspective, championId) {
     const overall = overallRawWinRate[supportIndex];
     const naiveDelta = raw === null || overall === null ? null : sign * 100 * (raw - overall);
     return {
-      supportId,
+      rowId,
       naiveDelta,
       edge: sign * edgeTable.point[supportIndex][championIndex],
       edgeLow, edgeHigh,
@@ -601,7 +660,7 @@ function rowsForDuo() {
     ];
     return { point: totalOf(terms.map((term) => term.point)), variance: totalOf(terms.map((term) => term.variance)) };
   });
-  const average = rawTotals.reduce((sum, total, index) => sum + weights[index] * total.point, 0);
+  const average = averageOverPickable(rawTotals, weights, data.supports, duoPickedIds());
   // Plain games and win rate summed over a whole row (an unpicked enemy ADC = any ADC).
   const rowTotal = (gamesRow, winRateRow) => {
     let games = 0;
@@ -670,7 +729,7 @@ function rowsForDuo() {
       ? { games: view.raw.versus_games[supportIndex][enemyBotIndex], winRate: view.raw.versus_win_rate[supportIndex][enemyBotIndex] }
       : rowTotal(view.raw.versus_games[supportIndex], view.raw.versus_win_rate[supportIndex]);
     return {
-      supportId,
+      rowId: supportId,
       edge: convert(centered), edgeLow: convert(centered - z * sd), edgeHigh: convert(centered + z * sd),
       probability: sd > 0 ? normalCdf(centered / sd) : 0.5,
       counter: null, counterLow: null, counterHigh: null,
@@ -683,13 +742,130 @@ function rowsForDuo() {
   });
 }
 
+// Champions already picked in the 2v2 (your teammate, the enemy ADC and support): none of them can be
+// picked again, so they are neither rows nor part of the "average option" a row is compared with.
+function duoPickedIds() {
+  const teammate = isAdcSheet() ? state.duoMySupport : state.duoMyBot;
+  return [teammate, state.duoEnemyBot, state.duoEnemySupport].filter((choice) => choice !== "any").map(Number);
+}
+function averageOverPickable(rawTotals, weights, rowIds, pickedIds) {
+  let weightedSum = 0;
+  let weightTotal = 0;
+  rowIds.forEach((rowId, rowIndex) => {
+    if (pickedIds.includes(rowId)) return;
+    weightedSum += weights[rowIndex] * rawTotals[rowIndex].point;
+    weightTotal += weights[rowIndex];
+  });
+  return weightedSum / weightTotal;
+}
+
+// ADC sheet 2v2: your ADC options given your support, the enemy ADC and the enemy support. Each
+// option's total is ADC strength + synergy with your support + ADC vs enemy ADC - the enemy
+// support's matchup into this ADC; anything not picked yet is averaged over its role by pick share.
+function rowsForAdcDuo() {
+  const model = currentModel();
+  const view = currentView();
+  const components = view.components;
+  const supportCount = data.supports.length;
+  const botCount = data.bots.length;
+  const mySupportIndex = state.duoMySupport === "any" ? -1 : data.supports.indexOf(Number(state.duoMySupport));
+  const enemyBotIndex = state.duoEnemyBot === "any" ? -1 : data.bots.indexOf(state.duoEnemyBot);
+  const enemySupportIndex = state.duoEnemySupport === "any" ? -1 : data.supports.indexOf(Number(state.duoEnemySupport));
+  const totalOf = (values) => values.reduce((sum, value) => sum + value, 0);
+  const supportWeights = view.support_weights.map((weight) => weight / totalOf(view.support_weights));
+  const botWeights = view.bot_weights.map((weight) => weight / totalOf(view.bot_weights));
+  // One term for the picked champion (by its component position), or the pick-share average.
+  const termFor = (family, positionOf, pickedIndex, averagingWeights, sign = 1) => {
+    if (pickedIndex >= 0) return { point: sign * family.point[positionOf(pickedIndex)], variance: family.sd[positionOf(pickedIndex)] ** 2 };
+    let point = 0;
+    let variance = 0;
+    averagingWeights.forEach((weight, otherIndex) => {
+      point += weight * sign * family.point[positionOf(otherIndex)];
+      variance += (weight * family.sd[positionOf(otherIndex)]) ** 2;
+    });
+    return { point, variance };
+  };
+  const rawTotals = data.bots.map((botId, botIndex) => {
+    const terms = [
+      termFor(components.bot_strength, () => botIndex, 0, null),
+      termFor(components.synergy, (supportIndex) => supportIndex * botCount + botIndex, mySupportIndex, supportWeights),
+      termFor(components.bot_vs_bot, (otherBotIndex) => botIndex * botCount + otherBotIndex, enemyBotIndex, botWeights),
+      termFor(components.versus, (supportIndex) => supportIndex * botCount + botIndex, enemySupportIndex, supportWeights, -1),
+    ];
+    return { point: totalOf(terms.map((term) => term.point)), variance: totalOf(terms.map((term) => term.variance)) };
+  });
+  const average = averageOverPickable(rawTotals, botWeights, data.bots, duoPickedIds());
+  const rowTotal = (gamesRow, winRateRow) => {
+    let games = 0;
+    let wins = 0;
+    gamesRow.forEach((rowGames, columnIndex) => {
+      if (rowGames > 0 && winRateRow[columnIndex] !== null) { games += rowGames; wins += rowGames * winRateRow[columnIndex]; }
+    });
+    return { games, winRate: games > 0 ? wins / games : null };
+  };
+  // Exact-lane counts, at champion level or (Champ Groups) at group level for every picked slot.
+  const laneRows = (data.exact_lane_games || {})[state.region] || [];
+  const groups = groupMode() ? view.groups : null;
+  const groupIndexByChampion = (groupList) => {
+    const groupOf = new Map();
+    groupList.forEach((group, groupIndex) => group.champions.forEach((championId) => groupOf.set(championId, groupIndex)));
+    return groupOf;
+  };
+  const botGroupOf = groups ? groupIndexByChampion(groups.bot_groups) : null;
+  const supportGroupOf = groups ? groupIndexByChampion(groups.support_groups) : null;
+  const sameBot = (first, second) => (groups ? botGroupOf.get(data.bots[first]) === botGroupOf.get(data.bots[second]) : first === second);
+  const sameSupport = (first, second) => (groups ? supportGroupOf.get(data.supports[first]) === supportGroupOf.get(data.supports[second]) : first === second);
+  const exactGamesByBotKey = new Map();
+  const botKey = (botIndex) => (groups ? botGroupOf.get(data.bots[botIndex]) : botIndex);
+  for (let offset = 0; offset < laneRows.length; offset += 5) {
+    const [laneMyBot, laneMySupport, laneEnemyBot, laneEnemySupport, laneGames] = laneRows.slice(offset, offset + 5);
+    if (mySupportIndex >= 0 && !sameSupport(laneMySupport, mySupportIndex)) continue;
+    if (enemyBotIndex >= 0 && !sameBot(laneEnemyBot, enemyBotIndex)) continue;
+    if (enemySupportIndex >= 0 && !sameSupport(laneEnemySupport, enemySupportIndex)) continue;
+    exactGamesByBotKey.set(botKey(laneMyBot), (exactGamesByBotKey.get(botKey(laneMyBot)) || 0) + laneGames);
+  }
+  const isWin = model.unit === "pp";
+  const z = 1.6449;
+  const convert = (value) => (isWin ? 100 * (logistic(value) - 0.5) : value);
+  const normalCdf = (x) => 0.5 * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * x ** 3)));
+  return data.bots.map((botId, botIndex) => {
+    const centered = rawTotals[botIndex].point - average;
+    const sd = Math.sqrt(rawTotals[botIndex].variance);
+    // Games and raw WR against the enemy ADC (any enemy ADC when none is picked); group level in Champ Groups.
+    let versusRaw;
+    if (groups) {
+      const myGroup = botGroupOf.get(botId);
+      const enemyGroup = enemyBotIndex >= 0 ? botGroupOf.get(data.bots[enemyBotIndex]) : undefined;
+      versusRaw = myGroup === undefined ? { games: 0, winRate: null }
+        : enemyBotIndex < 0 ? rowTotal(groups.raw.bot_versus.games[myGroup], groups.raw.bot_versus.win_rate[myGroup])
+          : enemyGroup === undefined ? { games: 0, winRate: null }
+            : { games: groups.raw.bot_versus.games[myGroup][enemyGroup], winRate: groups.raw.bot_versus.win_rate[myGroup][enemyGroup] };
+    } else {
+      versusRaw = enemyBotIndex >= 0
+        ? { games: view.raw.bot_versus_games[botIndex][enemyBotIndex], winRate: view.raw.bot_versus_win_rate[botIndex][enemyBotIndex] }
+        : rowTotal(view.raw.bot_versus_games[botIndex], view.raw.bot_versus_win_rate[botIndex]);
+    }
+    return {
+      rowId: botId,
+      edge: convert(centered), edgeLow: convert(centered - z * sd), edgeHigh: convert(centered + z * sd),
+      probability: sd > 0 ? normalCdf(centered / sd) : 0.5,
+      counter: null, counterLow: null, counterHigh: null,
+      expected: null,
+      rawWinRate: versusRaw.winRate,
+      games: versusRaw.games,
+      exactGames: exactGamesByBotKey.get(botKey(botIndex)) || 0,
+    };
+  });
+}
+
 // ---------------------------------------------------------------- blind & ban
 // A blind pick can land in any bot lane: your ADC, the enemy ADC and the enemy support are each
 // drawn by pick share in this view (no champion twice in one lane; a ban is scored against the
 // enemy's options only, see badLuckOutcome). A lane's value is the fitted bot-lane total for your side minus the enemy's
 // (strengths, synergies, both supports' matchups into the enemy ADC, support vs support and ADC
 // vs ADC), measured against the average lane and shown in the page's measure.
-function buildBlindAnalysis(poolIds, myBotChoice) {
+// poolRole "support": the pool is supports and the partner is your ADC; "bot": the reverse (ADC sheet).
+function buildBlindAnalysis(poolIds, partnerChoice, poolRole) {
   const view = currentView();
   const model = currentModel();
   const components = view.components;
@@ -711,31 +887,40 @@ function buildBlindAnalysis(poolIds, myBotChoice) {
     + botVsBot[myBotIndex * botCount + enemyBotIndex]
     - (supportStrength[enemySupportIndex] + botStrength[enemyBotIndex] + synergy[enemySupportIndex * botCount + enemyBotIndex]
        + versus[enemySupportIndex * botCount + myBotIndex]);
-  const fixedMyBotIndex = myBotChoice === "any" ? -1 : botIds.indexOf(Number(myBotChoice));
-  const myBotIndices = fixedMyBotIndex >= 0 ? [fixedMyBotIndex] : botIds.map((botId, botIndex) => botIndex);
-  const myBotWeight = (botIndex) => (fixedMyBotIndex >= 0 ? 1 : botWeights[botIndex]);
+  // "pick" = the role your pool is in; "partner" = your teammate in the other bot-lane role.
+  const pickIds = poolRole === "support" ? supportIds : botIds;
+  const pickWeights = poolRole === "support" ? supportWeights : botWeights;
+  const partnerIds = poolRole === "support" ? botIds : supportIds;
+  const partnerWeights = poolRole === "support" ? botWeights : supportWeights;
+  const ownLaneTotal = (pickIndex, partnerIndex, enemyBotIndex, enemySupportIndex) => (poolRole === "support"
+    ? laneTotal(pickIndex, partnerIndex, enemyBotIndex, enemySupportIndex)
+    : laneTotal(partnerIndex, pickIndex, enemyBotIndex, enemySupportIndex));
+  const fixedPartnerIndex = partnerChoice === "any" ? -1 : partnerIds.indexOf(Number(partnerChoice));
+  const partnerIndices = fixedPartnerIndex >= 0 ? [fixedPartnerIndex] : partnerIds.map((partnerId, partnerIndex) => partnerIndex);
+  const partnerWeight = (partnerIndex) => (fixedPartnerIndex >= 0 ? 1 : partnerWeights[partnerIndex]);
+  // A champion appears at most once in a lane (plain comparisons: these run millions of times).
+  const allDistinct = (first, second, third, fourth) => first !== second && first !== third && second !== third
+    && (fourth === undefined || (fourth !== first && fourth !== second && fourth !== third));
 
-  // The average lane (any support of yours, weighted by pick share) is zero; the typical support's
-  // value in each specific lane is kept too, for the "edge vs a typical support" spreads.
-  const laneKey = (myBotIndex, enemyBotIndex, enemySupportIndex) => (myBotIndex * botCount + enemyBotIndex) * supportCount + enemySupportIndex;
-  const typicalSupportTotal = new Float64Array(botCount * botCount * supportCount);
+  // The average lane (any pick of yours in the pool's role, weighted by pick share) is zero; the typical
+  // pick's value in each specific lane is kept too, for the "edge vs a typical pick" spreads.
+  const laneKey = (partnerIndex, enemyBotIndex, enemySupportIndex) => (partnerIndex * botCount + enemyBotIndex) * supportCount + enemySupportIndex;
+  const typicalPickTotal = new Float64Array(partnerIds.length * botCount * supportCount);
   let baselineSum = 0;
   let baselineWeight = 0;
-  for (const myBotIndex of myBotIndices) {
+  for (const partnerIndex of partnerIndices) {
     for (let enemyBotIndex = 0; enemyBotIndex < botCount; enemyBotIndex++) {
-      if (botIds[enemyBotIndex] === botIds[myBotIndex]) continue;
       for (let enemySupportIndex = 0; enemySupportIndex < supportCount; enemySupportIndex++) {
-        const enemySupportId = supportIds[enemySupportIndex];
-        if (enemySupportId === botIds[myBotIndex] || enemySupportId === botIds[enemyBotIndex]) continue;
+        if (!allDistinct(partnerIds[partnerIndex], botIds[enemyBotIndex], supportIds[enemySupportIndex])) continue;
         let laneSum = 0;
         let laneWeight = 0;
-        for (let supportIndex = 0; supportIndex < supportCount; supportIndex++) {
-          if (supportIndex === enemySupportIndex) continue;
-          laneSum += supportWeights[supportIndex] * laneTotal(supportIndex, myBotIndex, enemyBotIndex, enemySupportIndex);
-          laneWeight += supportWeights[supportIndex];
+        for (let pickIndex = 0; pickIndex < pickIds.length; pickIndex++) {
+          if (!allDistinct(pickIds[pickIndex], partnerIds[partnerIndex], botIds[enemyBotIndex], supportIds[enemySupportIndex])) continue;
+          laneSum += pickWeights[pickIndex] * ownLaneTotal(pickIndex, partnerIndex, enemyBotIndex, enemySupportIndex);
+          laneWeight += pickWeights[pickIndex];
         }
-        typicalSupportTotal[laneKey(myBotIndex, enemyBotIndex, enemySupportIndex)] = laneSum / laneWeight;
-        const weight = myBotWeight(myBotIndex) * botWeights[enemyBotIndex] * supportWeights[enemySupportIndex];
+        typicalPickTotal[laneKey(partnerIndex, enemyBotIndex, enemySupportIndex)] = laneSum / laneWeight;
+        const weight = partnerWeight(partnerIndex) * botWeights[enemyBotIndex] * supportWeights[enemySupportIndex];
         baselineSum += weight * laneSum / laneWeight;
         baselineWeight += weight;
       }
@@ -745,30 +930,28 @@ function buildBlindAnalysis(poolIds, myBotChoice) {
   const isWin = model.unit === "pp";
   const toMeasure = (total) => (isWin ? 100 * (logistic(total - baseline) - 0.5) : total - baseline);
 
-  const laneSets = poolIds.filter((supportId) => supportIds.includes(supportId)).map((supportId) => {
-    const supportIndex = supportIds.indexOf(supportId);
+  const laneSets = poolIds.filter((pickId) => pickIds.includes(pickId)).map((pickId) => {
+    const pickIndex = pickIds.indexOf(pickId);
     const lanes = [];
-    for (const myBotIndex of myBotIndices) {
-      if (botIds[myBotIndex] === supportId) continue;
+    for (const partnerIndex of partnerIndices) {
       for (let enemyBotIndex = 0; enemyBotIndex < botCount; enemyBotIndex++) {
-        if (botIds[enemyBotIndex] === botIds[myBotIndex] || botIds[enemyBotIndex] === supportId) continue;
         for (let enemySupportIndex = 0; enemySupportIndex < supportCount; enemySupportIndex++) {
           const enemySupportId = supportIds[enemySupportIndex];
-          if (enemySupportId === supportId || enemySupportId === botIds[myBotIndex] || enemySupportId === botIds[enemyBotIndex]) continue;
-          const total = laneTotal(supportIndex, myBotIndex, enemyBotIndex, enemySupportIndex);
+          if (!allDistinct(pickId, partnerIds[partnerIndex], botIds[enemyBotIndex], enemySupportId)) continue;
+          const total = ownLaneTotal(pickIndex, partnerIndex, enemyBotIndex, enemySupportIndex);
           lanes.push({
             value: toMeasure(total),
-            edge: toMeasure(total) - toMeasure(typicalSupportTotal[laneKey(myBotIndex, enemyBotIndex, enemySupportIndex)]),
-            weight: myBotWeight(myBotIndex) * botWeights[enemyBotIndex] * supportWeights[enemySupportIndex],
-            myBotId: botIds[myBotIndex], enemyBotId: botIds[enemyBotIndex], enemySupportId,
+            edge: toMeasure(total) - toMeasure(typicalPickTotal[laneKey(partnerIndex, enemyBotIndex, enemySupportIndex)]),
+            weight: partnerWeight(partnerIndex) * botWeights[enemyBotIndex] * supportWeights[enemySupportIndex],
+            partnerId: partnerIds[partnerIndex], enemyBotId: botIds[enemyBotIndex], enemySupportId,
           });
         }
       }
     }
     lanes.sort((first, second) => first.value - second.value);
-    return { supportId, lanes, ...describeLanes(lanes, fixedMyBotIndex < 0) };
+    return { pickId, lanes, ...describeLanes(lanes, fixedPartnerIndex < 0) };
   });
-  const banCandidates = [...new Set([...botIds, ...supportIds])].filter((championId) => championId !== Number(myBotChoice));
+  const banCandidates = [...new Set([...botIds, ...supportIds])].filter((championId) => championId !== Number(partnerChoice));
   return { laneSets, banCandidates };
 }
 
@@ -791,7 +974,7 @@ function describeLanes(lanes, partnerVaries) {
     weightSum += lane.weight;
     accumulate(byEnemyBot, lane.enemyBotId, lane.value, lane.weight);
     accumulate(byEnemySupport, lane.enemySupportId, lane.value, lane.weight);
-    accumulate(byMyBot, lane.myBotId, lane.edge, lane.weight);
+    accumulate(byMyBot, lane.partnerId, lane.edge, lane.weight);
     accumulate(byEnemyPair, `${lane.enemyBotId}|${lane.enemySupportId}`, lane.edge, lane.weight);
   }
   const ranked = (table) => [...table.entries()].map(([championId, entry]) => ({ championId, value: entry.sum / entry.weight }))
@@ -817,7 +1000,7 @@ function describeLanes(lanes, partnerVaries) {
 // options are left alone, so a ban is never credited for keeping a weak ADC off your side. You
 // can't blind a champion you ban yourself.
 function badLuckOutcome(laneSet, bannedId, tailShare) {
-  if (laneSet.supportId === bannedId) return null;
+  if (laneSet.pickId === bannedId) return null;
   const involvesBan = (lane) => lane.enemyBotId === bannedId || lane.enemySupportId === bannedId;
   let remainingWeight = 0;
   let remainingSum = 0;
@@ -841,19 +1024,21 @@ function badLuckOutcome(laneSet, bannedId, tailShare) {
 }
 
 function blindPlan() {
-  const analysis = buildBlindAnalysis(state.blindPool, state.blindMyBot);
+  const analysis = isAdcSheet()
+    ? buildBlindAnalysis(state.blindAdcPool, state.blindMySupport, "bot")
+    : buildBlindAnalysis(state.blindPool, state.blindMyBot, "support");
   const tailShare = state.blindTail;
   const bestPickFor = (bannedId) => {
     let best = null;
     for (const laneSet of analysis.laneSets) {
       const outcome = badLuckOutcome(laneSet, bannedId, tailShare);
-      if (outcome && (!best || outcome.tail > best.tail)) best = { supportId: laneSet.supportId, ...outcome };
+      if (outcome && (!best || outcome.tail > best.tail)) best = { pickId: laneSet.pickId, ...outcome };
     }
     return best;
   };
   const noBan = bestPickFor(null);
   const bans = analysis.banCandidates.map((bannedId) => ({ bannedId, ...bestPickFor(bannedId) }))
-    .filter((ban) => ban.supportId !== undefined)
+    .filter((ban) => ban.pickId !== undefined)
     .sort((first, second) => second.tail - first.tail);
   const rows = analysis.laneSets.map((laneSet) => {
     const unbanned = badLuckOutcome(laneSet, null, tailShare);
@@ -893,20 +1078,24 @@ function renderStatus() {
   if (goldInput.disabled && state.metric === "lane_gold_at_14") state.metric = "win";
 }
 
-// The role the picker selects: the enemy support in "Pick into support", otherwise an ADC.
-function pickerRole() { return state.perspective === "support" ? "support" : "bot"; }
+// The role the picker selects: the enemy support in "Pick into support", and on the ADC sheet also
+// your own support in "Partner for my support"; otherwise an ADC.
+function pickerRole() {
+  if (state.perspective === "support") return "support";
+  return isAdcSheet() && state.perspective === "partner" ? "support" : "bot";
+}
 
 function pickerChampions(source = currentSource(), role = pickerRole()) {
-  const ids = role === "support" ? source.supports : source.bots;
-  const weights = role === "support" ? source.supportWeights : source.botWeights;
+  const ids = idsForRole(source, role);
+  const weights = weightsForRole(source, role);
   const order = ids.map((botId, botIndex) => ({ botId, weight: weights[botIndex] }));
   order.sort((first, second) => second.weight - first.weight);
   return order;
 }
 
 function selectedChampion() {
-  const key = `${state.perspective}|${groupMode() ? "groups" : "champions"}`;
-  const available = pickerRole() === "support" ? currentSource().supports : currentSource().bots;
+  const key = selectionKey();
+  const available = idsForRole(currentSource(), pickerRole());
   if (state.championByPerspective[key] === undefined || !available.includes(state.championByPerspective[key])) {
     state.championByPerspective[key] = pickerChampions()[0].botId;
   }
@@ -925,7 +1114,7 @@ function renderPicker() {
   const isGroups = source.kind === "groups";
   const role = pickerRole();
   const isEnemy = state.perspective === "pick" || state.perspective === "support";
-  elements.pickerLabel.textContent = `${isEnemy ? "Enemy" : "Your"} ${role === "support" ? "support" : "ADC"}${isGroups ? " group" : ""}`;
+  elements.pickerLabel.textContent = `${isEnemy ? "Enemy" : "Your"} ${roleWord(role)}${isGroups ? " group" : ""}`;
   const selected = selectedChampion();
   const query = state.search.trim().toLowerCase();
   // In group mode the search also matches a group's member champions.
@@ -939,29 +1128,39 @@ function renderPicker() {
     </button>`).join("");
 }
 
-// Blind & ban: the grid toggles champions in and out of your support pool.
+// Blind & ban: the grid toggles champions in and out of your pool (supports, or ADCs on the ADC sheet).
 function renderPoolPicker() {
   const source = championSource();
-  elements.pickerLabel.textContent = "Your support pool";
+  const poolRole = rowRole();
+  const pool = currentPool();
+  const poolWord = roleWord(poolRole);
+  elements.pickerLabel.textContent = `Your ${poolWord} pool`;
   const query = state.search.trim().toLowerCase();
-  const champions = pickerChampions(source, "support").filter(({ botId }) => !query || championName(botId).toLowerCase().includes(query));
-  elements.pickerCount.textContent = `${state.blindPool.filter((championId) => data.supports.includes(championId)).length} in pool`;
+  const champions = pickerChampions(source, poolRole).filter(({ botId }) => !query || championName(botId).toLowerCase().includes(query));
+  elements.pickerCount.textContent = `${pool.filter((championId) => idsForRole(source, poolRole).includes(championId)).length} in pool`;
   elements.grid.innerHTML = champions.map(({ botId, weight }) => `
-    <button type="button" class="champion-button" data-champion="${botId}" aria-pressed="${state.blindPool.includes(botId)}" title="${escapeHtml(championName(botId))} · ${(weight * 100).toFixed(1)}% of support picks · click to ${state.blindPool.includes(botId) ? "remove from" : "add to"} your pool">
-      ${entityIcon(source, "support", botId, 44)}
+    <button type="button" class="champion-button" data-champion="${botId}" aria-pressed="${pool.includes(botId)}" title="${escapeHtml(championName(botId))} · ${(weight * 100).toFixed(1)}% of ${poolRole === "support" ? "support" : "bot-lane"} picks · click to ${pool.includes(botId) ? "remove from" : "add to"} your pool">
+      ${entityIcon(source, poolRole, botId, 44)}
       <span>${escapeHtml(championName(botId))}</span>
     </button>`).join("");
-  elements.blindMyBot.innerHTML = `<option value="any" ${state.blindMyBot === "any" ? "selected" : ""}>Anyone (solo queue)</option>`
-    + alphabeticalOptionHtml(data.bots, state.blindMyBot, " (duo)");
+  // Your partner: an ADC on the support sheet, a support on the ADC sheet.
+  const partnerChoice = isAdcSheet() ? state.blindMySupport : state.blindMyBot;
+  elements.blindPartnerLabel.textContent = isAdcSheet() ? "Your support" : "Your ADC";
+  elements.blindMyBot.innerHTML = `<option value="any" ${partnerChoice === "any" ? "selected" : ""}>Anyone (solo queue)</option>`
+    + alphabeticalOptionHtml(isAdcSheet() ? data.supports : data.bots, partnerChoice, " (duo)");
   elements.blindTail.value = String(state.blindTail);
 }
 
 function renderDuoPickers() {
-  const mostPickedBots = pickerChampions(championSource()).map(({ botId }) => botId);
+  const mostPickedBots = pickerChampions(championSource(), "bot").map(({ botId }) => botId);
   if (state.duoMyBot === null) state.duoMyBot = mostPickedBots[0];
   if (state.duoEnemyBot === null) state.duoEnemyBot = mostPickedBots[1 % mostPickedBots.length];
   const notPickedOption = (selectedValue) => `<option value="any" ${selectedValue === "any" ? "selected" : ""}>Not picked yet</option>`;
-  elements.duoMyBot.innerHTML = notPickedOption(state.duoMyBot) + alphabeticalOptionHtml(data.bots, state.duoMyBot);
+  // The first box is your teammate: your ADC on the support sheet, your support on the ADC sheet.
+  elements.duoMyLabel.textContent = isAdcSheet() ? "Your support" : "Your ADC";
+  elements.duoMyBot.innerHTML = isAdcSheet()
+    ? notPickedOption(state.duoMySupport) + alphabeticalOptionHtml(data.supports, state.duoMySupport)
+    : notPickedOption(state.duoMyBot) + alphabeticalOptionHtml(data.bots, state.duoMyBot);
   elements.duoEnemyBot.innerHTML = notPickedOption(state.duoEnemyBot) + alphabeticalOptionHtml(data.bots, state.duoEnemyBot);
   elements.duoEnemySupport.innerHTML = notPickedOption(state.duoEnemySupport) + alphabeticalOptionHtml(data.supports, state.duoEnemySupport);
 }
@@ -1014,6 +1213,16 @@ function axisSvg(limit, decimals) {
 function headerTitle(perspective, championId) {
   const source = currentSource();
   const name = escapeHtml(entityName(source, pickerRole(), championId));
+  if (isAdcSheet()) {
+    const isGroups = source.kind === "groups";
+    const target = isGroups ? `one of ${escapeHtml(entityMembers(source, pickerRole(), championId).map(championName).join(", "))}` : name;
+    const rowsWord = isGroups ? "ADC groups" : "ADCs";
+    const groupNote = isGroups ? " Each row is one of your ADC groups; its numbers are the pick-weighted average of its members." : "";
+    if (perspective === "support") return { title: `${rowsWord} into ${name}`, meta: `Your ADC pick when the enemy support is ${target}, against the ADCs they usually lane with.${groupNote}` };
+    if (perspective === "pick") return { title: `${rowsWord} into ${name}`, meta: `Your ADC pick when the enemy ADC is ${target}, with the supports it usually lanes with.${groupNote}` };
+    if (perspective === "threats") return { title: `${rowsWord} that threaten ${name}`, meta: `Enemy ADCs ranked by how much they hurt you on ${target}. The most dangerous come first.${groupNote}` };
+    return { title: `Best ADCs for ${name}`, meta: `ADCs on your team, ranked by how much they add when your support is ${target}.${groupNote}` };
+  }
   if (source.kind === "groups") {
     const members = escapeHtml(entityMembers(source, pickerRole(), championId).map(championName).join(", "));
     const groupNote = `Each row is one of your support groups; its numbers are the pick-weighted average of its members.`;
@@ -1036,7 +1245,14 @@ function renderSheet() {
   const perspective = state.perspective;
   const isDuo = perspective === "duo";
   const championId = isDuo ? state.duoEnemyBot : selectedChampion();
-  const rows = isDuo ? rowsForDuo() : rowsForSingleChampion(perspective, championId);
+  // A champion already in the lane can't be picked again: drop it as a row (e.g. Thresh in
+  // "Supports into Thresh", or Swain as a support into a Swain bot). Group rows stay, since a group
+  // can still be picked through its other members.
+  const unpickableIds = isDuo ? duoPickedIds() : groupMode() ? [] : [championId];
+  const rows = (isDuo ? (isAdcSheet() ? rowsForAdcDuo() : rowsForDuo()) : rowsForSingleChampion(perspective, championId))
+    .filter((row) => !unpickableIds.includes(row.rowId));
+  const rowsRole = rowRole();
+  const rowsWord = roleWord(rowsRole);
   const rowSource = isDuo ? championSource() : currentSource();
   const decimals = model.decimals;
   const units = unitLabel(model);
@@ -1055,24 +1271,37 @@ function renderSheet() {
     const mine = escapeHtml(duoBotLabel(state.duoMyBot));
     const enemy = escapeHtml(duoBotLabel(state.duoEnemyBot));
     const enemySupport = state.duoEnemySupport === "any" ? "a typical support" : escapeHtml(championName(Number(state.duoEnemySupport)));
-    const unpickedNote = [state.duoMyBot, state.duoEnemyBot, state.duoEnemySupport].includes("any")
+    const myTeammate = isAdcSheet() ? state.duoMySupport : state.duoMyBot;
+    const unpickedNote = [myTeammate, state.duoEnemyBot, state.duoEnemySupport].includes("any")
       ? " Anything not picked yet is averaged over that role by how often each champion is played." : "";
-    headHtml = `<div class="sheet-head">${state.duoEnemyBot === "any" ? "" : `<img src="${iconPath(state.duoEnemyBot)}" alt="">`}<div><h2>${mine} + ? vs ${enemy} + ${enemySupport}</h2>
-      <p class="sheet-meta">Your support options for this ${state.duoMyBot === "any" || state.duoEnemyBot === "any" ? "lane" : "exact 2v2"}, combining support strength, synergy with ${mine}, the matchup into ${enemy}${state.duoEnemySupport === "any" ? "" : ` and the support-vs-support matchup`}.${unpickedNote}${groupMode() ? " Each matchup borrows strength from your Champion Groups as far as the data says the groups play alike." : ""} Intervals here are approximate (they ignore correlations between terms).</p>
+    const laneWord = myTeammate === "any" || state.duoEnemyBot === "any" ? "lane" : "exact 2v2";
+    const groupBorrowNote = groupMode() ? " Each matchup borrows strength from your Champion Groups as far as the data says the groups play alike." : "";
+    if (isAdcSheet()) {
+      const mySupportName = state.duoMySupport === "any" ? "a typical support" : escapeHtml(championName(Number(state.duoMySupport)));
+      headHtml = `<div class="sheet-head">${state.duoEnemyBot === "any" ? "" : `<img src="${iconPath(state.duoEnemyBot)}" alt="">`}<div><h2>? + ${mySupportName} vs ${enemy} + ${enemySupport}</h2>
+      <p class="sheet-meta">Your ADC options for this ${laneWord}, combining ADC strength, synergy with ${mySupportName}, the matchup into ${enemy}${state.duoEnemySupport === "any" ? "" : ` and how ${enemySupport} plays into each ADC`}.${unpickedNote}${groupBorrowNote} Intervals here are approximate (they ignore correlations between terms).</p>`;
+    } else {
+      headHtml = `<div class="sheet-head">${state.duoEnemyBot === "any" ? "" : `<img src="${iconPath(state.duoEnemyBot)}" alt="">`}<div><h2>${mine} + ? vs ${enemy} + ${enemySupport}</h2>
+      <p class="sheet-meta">Your support options for this ${laneWord}, combining support strength, synergy with ${mine}, the matchup into ${enemy}${state.duoEnemySupport === "any" ? "" : ` and the support-vs-support matchup`}.${unpickedNote}${groupBorrowNote} Intervals here are approximate (they ignore correlations between terms).</p>`;
+    }
+    headHtml += `
       ${!groupMode() && pooledAvailable() ? `<p class="duo-warning" role="note">Champ detail: each matchup here uses only that exact champion pair's games, so rare pairs are mostly guesswork. Switch Detail to <strong>Champ Groups</strong> for numbers that borrow strength from similar champions.</p>` : ""}</div></div>`;
   } else {
     const titles = headerTitle(perspective, championId);
     const source = currentSource();
     const role = pickerRole();
-    const pickedIndex = (role === "support" ? source.supports : source.bots).indexOf(championId);
-    const facedMatrix = role === "support" ? source.raw.support_versus_games : source.raw.versus_games;
-    const facedGames = facedMatrix.reduce((sum, row) => sum + row[pickedIndex], 0);
-    const pickShare = (role === "support" ? source.supportWeights : source.botWeights)[pickedIndex];
+    const pickedIndex = idsForRole(source, role).indexOf(championId);
+    // Support sheet: games of any listed support facing the selected champion. ADC sheet: the rows' own games.
+    const facedGames = isAdcSheet()
+      ? rows.reduce((sum, row) => sum + row.games, 0)
+      : (role === "support" ? source.raw.support_versus_games : source.raw.versus_games).reduce((sum, row) => sum + row[pickedIndex], 0);
+    const pairingWord = isAdcSheet() && perspective === "partner" ? "with" : "vs";
+    const pickShare = weightsForRole(source, role)[pickedIndex];
     headHtml = `<div class="sheet-head">${entityIcon(source, role, championId, 56)}<div><h2>${titles.title}</h2><p class="sheet-meta">${titles.meta}</p></div></div>
-      <div class="sheet-summary"><span><strong>${formatInteger(facedGames)}</strong> support-vs-${escapeHtml(entityName(source, role, championId))} games in this view</span><span><strong>${(pickShare * 100).toFixed(1)}%</strong> of ${role === "support" ? "support" : "bot-lane"} picks</span></div>`;
+      <div class="sheet-summary"><span><strong>${formatInteger(facedGames)}</strong> ${rowsWord}-${pairingWord}-${escapeHtml(entityName(source, role, championId))} games in this view</span><span><strong>${(pickShare * 100).toFixed(1)}%</strong> of ${role === "support" ? "support" : "bot-lane"} picks</span></div>`;
   }
   // Header labels are split onto two lines (first line, second line) to keep the columns narrow.
-  const edgeHeaderLines = isDuo ? ["Edge in", "this 2v2"] : perspective === "threats" ? ["Your edge vs", "this support"] : perspective === "partner" ? ["Edge with", "this partner"] : ["Edge vs", "typical pick"];
+  const edgeHeaderLines = isDuo ? ["Edge in", "this 2v2"] : perspective === "threats" ? ["Your edge vs", `this ${rowsWord}`] : perspective === "partner" ? ["Edge with", "this partner"] : ["Edge vs", "typical pick"];
   const edgeHeader = edgeHeaderLines.join(" ");
   const counterHeaderLines = perspective === "partner" ? ["Synergy", "only"] : ["Counter", "only"];
   const expectedHeaderLines = model.unit === "pp" ? (perspective === "threats" ? ["Your", "exp. WR"] : ["Exp.", "WR"]) : ["Exp.", model.label.replace("Lane ", "")];
@@ -1088,7 +1317,7 @@ function renderSheet() {
     const expectedText = row.expected === null ? "—" : model.unit === "pp" ? formatPercent(row.expected) : formatSigned(row.expected, decimals);
     return `<tr>
       <td class="rank" data-column="rank">${rowIndex + 1}</td>
-      <td data-column="support" title="${escapeHtml(entityTitle(rowSource, "support", row.supportId))}"><span class="support-cell">${entityIcon(rowSource, "support", row.supportId, 28)}${escapeHtml(entityName(rowSource, "support", row.supportId))}</span></td>
+      <td data-column="support" title="${escapeHtml(entityTitle(rowSource, rowsRole, row.rowId))}"><span class="support-cell">${entityIcon(rowSource, rowsRole, row.rowId, 28)}${escapeHtml(entityName(rowSource, rowsRole, row.rowId))}</span></td>
       <td class="plot-cell" data-column="plot">${plotSvg(row, limit, "edge")}</td>
       <td class="numeric" data-column="edge"><span class="edge-value">${formatSigned(row.edge, decimals)}</span><span class="interval-text">${formatSigned(row.edgeLow, decimals)} to ${formatSigned(row.edgeHigh, decimals)}</span></td>
       <td class="numeric" data-column="probability">${formatPercent(row.probability, 0)}</td>
@@ -1105,12 +1334,12 @@ function renderSheet() {
       <span class="legend-item"><svg width="30" height="12" aria-hidden="true"><line x1="2" x2="28" y1="6" y2="6" stroke="var(--good)" stroke-width="2" stroke-linecap="round"/><circle cx="15" cy="6" r="4" fill="var(--good)"/></svg>Better, 90% interval above zero</span>
       <span class="legend-item"><svg width="30" height="12" aria-hidden="true"><line x1="2" x2="28" y1="6" y2="6" stroke="var(--bad)" stroke-width="2" stroke-linecap="round"/><circle cx="15" cy="6" r="4" fill="var(--bad)"/></svg>Worse, interval below zero</span>
       <span class="legend-item"><svg width="30" height="12" aria-hidden="true"><line x1="2" x2="28" y1="6" y2="6" stroke="var(--unclear)" stroke-width="2" stroke-linecap="round"/><circle cx="15" cy="6" r="4" fill="var(--panel)" stroke="var(--unclear)" stroke-width="2"/></svg>Can't tell yet</span>
-      <span class="legend-item">Units: ${model.unit === "pp" ? "win-rate points" : model.unit} vs ${isDuo ? "the average option" : "a typical support pick"}</span>
+      <span class="legend-item">Units: ${model.unit === "pp" ? "win-rate points" : model.unit} vs ${isDuo ? "the average option" : `a typical ${rowsWord} pick`}</span>
     </div>
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th data-column="rank" tabindex="0">#</th><th data-column="support" tabindex="0">Support</th>
+          <th data-column="rank" tabindex="0">#</th><th data-column="support" tabindex="0">${isAdcSheet() ? "ADC" : "Support"}</th>
           <th class="axis-head" data-column="plot" tabindex="0" aria-label="${edgeHeader} chart">${axisSvg(limit, decimals > 0 ? 1 : 0)}</th>
           <th class="numeric" data-column="edge">${sortButton("edge", twoLines([edgeHeaderLines[0], `${edgeHeaderLines[1]} (${units.trim()})`]))}</th>
           <th class="numeric" data-column="probability" tabindex="0">${twoLines(["P", "(better)"])}</th>
@@ -1128,9 +1357,11 @@ function renderSheet() {
 
 function renderBlindSheet() {
   const model = currentModel();
-  const poolInData = state.blindPool.filter((championId) => data.supports.includes(championId));
+  const poolWord = roleWord(rowRole());
+  const partnerWord = isAdcSheet() ? "support" : "ADC";
+  const poolInData = currentPool().filter((championId) => idsForRole(championSource(), rowRole()).includes(championId));
   if (!poolInData.length) {
-    elements.sheet.innerHTML = `<div class="sheet-head"><div><h2>Blind &amp; ban</h2><p class="sheet-meta">Add the supports you play from the grid to build your pool.</p></div></div>`;
+    elements.sheet.innerHTML = `<div class="sheet-head"><div><h2>Blind &amp; ban</h2><p class="sheet-meta">Add the ${poolWord}s you play from the grid to build your pool.</p></div></div>`;
     return;
   }
   const plan = blindPlan();
@@ -1143,18 +1374,19 @@ function renderBlindSheet() {
     `<span class="support-cell"><img src="${iconPath(threat.championId)}" alt="" width="22" height="22" loading="lazy">${escapeHtml(championName(threat.championId))} <span class="${valueClass(threat.value)}">${formatValue(threat.value)}</span></span>`).join("")}</span>`;
   const tailPercent = Math.round(state.blindTail * 100);
   const best = plan.bans[0];
-  const partnerText = state.blindMyBot === "any" ? "any ADC (solo queue)" : escapeHtml(championName(Number(state.blindMyBot)));
+  const partnerChoice = isAdcSheet() ? state.blindMySupport : state.blindMyBot;
+  const partnerText = partnerChoice === "any" ? `any ${partnerWord} (solo queue)` : escapeHtml(championName(Number(partnerChoice)));
   const measureText = model.unit === "pp" ? "win-rate points" : model.unit === "CS" ? "lane CS at 10:00" : "bot-duo gold at 14:00";
 
   const callHtml = `<div class="blind-call" role="note">
       <div class="blind-call-item" data-column="call-ban"><img src="${iconPath(best.bannedId)}" alt=""><div><span class="eyebrow">Ban</span><strong>${escapeHtml(championName(best.bannedId))}</strong></div></div>
-      <div class="blind-call-item" data-column="call-blind"><img src="${iconPath(best.supportId)}" alt=""><div><span class="eyebrow">Blind</span><strong>${escapeHtml(championName(best.supportId))}</strong></div></div>
-      <p class="blind-call-note">Your worst ${tailPercent}% of lanes average <strong class="${valueClass(best.tail)}">${formatValue(best.tail)}${unit}</strong> with this ban, against <strong class="${valueClass(plan.noBan.tail)}">${formatValue(plan.noBan.tail)}${unit}</strong> blinding ${escapeHtml(championName(plan.noBan.supportId))} with no ban. The average lane is 0.</p>
+      <div class="blind-call-item" data-column="call-blind"><img src="${iconPath(best.pickId)}" alt=""><div><span class="eyebrow">Blind</span><strong>${escapeHtml(championName(best.pickId))}</strong></div></div>
+      <p class="blind-call-note">Your worst ${tailPercent}% of lanes average <strong class="${valueClass(best.tail)}">${formatValue(best.tail)}${unit}</strong> with this ban, against <strong class="${valueClass(plan.noBan.tail)}">${formatValue(plan.noBan.tail)}${unit}</strong> blinding ${escapeHtml(championName(plan.noBan.pickId))} with no ban. The average lane is 0.</p>
     </div>`;
 
   const poolRows = plan.rows.slice().sort((first, second) => (second.bestBan ? second.bestBan.tail : -Infinity) - (first.bestBan ? first.bestBan.tail : -Infinity));
   const poolBody = poolRows.map((row) => `<tr>
-      <td data-column="blind-support">${championCell(row.supportId)}</td>
+      <td data-column="blind-support">${championCell(row.pickId)}</td>
       <td class="numeric" data-column="blind-tail"><span class="${valueClass(row.tail)}">${formatValue(row.tail)}</span></td>
       <td data-column="blind-best-ban">${row.bestBan ? `<span class="support-cell"><img src="${iconPath(row.bestBan.bannedId)}" alt="" width="22" height="22" loading="lazy">${escapeHtml(championName(row.bestBan.bannedId))} <span class="${valueClass(row.bestBan.tail)}">${formatValue(row.bestBan.tail)}</span></span>` : "—"}</td>
       <td class="numeric" data-column="blind-average"><span class="${valueClass(row.average)}">${formatValue(row.average)}</span></td>
@@ -1168,7 +1400,7 @@ function renderBlindSheet() {
   const banBody = plan.bans.slice(0, 8).map((ban, banIndex) => `<tr>
       <td class="rank" data-column="ban-rank">${banIndex + 1}</td>
       <td data-column="ban-champion">${championCell(ban.bannedId)}</td>
-      <td data-column="ban-then-blind">${championCell(ban.supportId)}</td>
+      <td data-column="ban-then-blind">${championCell(ban.pickId)}</td>
       <td class="numeric" data-column="ban-tail"><span class="${valueClass(ban.tail)}">${formatValue(ban.tail)}</span></td>
       <td class="numeric" data-column="ban-gain">${formatSigned(ban.tail - plan.noBan.tail, decimals)}</td>
     </tr>`).join("");
@@ -1179,13 +1411,13 @@ function renderBlindSheet() {
     <h3 class="blind-section-title">Your pool, blind</h3>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th data-column="blind-support" tabindex="0">Support</th>
+        <th data-column="blind-support" tabindex="0">${isAdcSheet() ? "ADC" : "Support"}</th>
         <th class="numeric" data-column="blind-tail" tabindex="0">Worst ${tailPercent}%<br>no ban</th>
         <th data-column="blind-best-ban" tabindex="0">Its best ban<br>→ worst ${tailPercent}%</th>
         <th class="numeric" data-column="blind-average" tabindex="0">Average<br>lane</th>
         <th data-column="blind-adc-threats" tabindex="0">Worst enemy<br>ADCs</th>
         <th data-column="blind-support-threats" tabindex="0">Worst enemy<br>supports</th>
-        <th class="optional" data-column="blind-partners" tabindex="0">Worst own<br>ADCs</th>
+        <th class="optional" data-column="blind-partners" tabindex="0">Worst own<br>${partnerWord}s</th>
         <th class="numeric optional" data-column="blind-matchup-spread" tabindex="0">Matchup<br>spread</th>
         <th class="numeric optional" data-column="blind-synergy-spread" tabindex="0">Synergy<br>spread</th>
       </tr></thead>
@@ -1225,24 +1457,74 @@ function blindExplanation(columnName) {
     "ban-tail": [`Worst ${tailPercent}%`, `That pick's worst ${tailPercent}% of lanes with this ban in place.`],
     "ban-gain": ["Gain vs no ban", "How much this ban improves your worst lanes compared with the best blind pick and no ban."],
   };
+  if (isAdcSheet()) {
+    explanations["blind-support"] = ["ADC", "A champion in your pool. Click ADCs in the grid to add or remove them."];
+    explanations["blind-support-threats"] = ["Worst enemy supports", "The enemy supports that leave this pick worst off, with your average outcome when they're on the other side (any ADC with them)."];
+    explanations["blind-partners"] = ["Worst own supports", "The supports on your own team that leave this pick worst off, relative to a typical ADC with that support: the synergy side of blindability. Only shown when your support is anyone (solo queue)."];
+    explanations["blind-synergy-spread"] = ["Synergy spread", "How much this pick's edge over a typical ADC swings across the supports you might get on your own team (1 SD). Low means it works with whoever your support picks."];
+  }
   return explanations[columnName];
 }
 
 function sheetFootnote(perspective, model) {
+  const typicalPick = `a typical ${roleWord(rowRole())} pick`;
   const measure = model.unit === "pp"
-    ? "Edge is the change in win probability against a pick-rate-weighted typical support, for a primary-role player of median experience."
+    ? `Edge is the change in win probability against a pick-rate-weighted typical ${roleWord(rowRole())}, for a primary-role player of median experience.`
     : model.unit === "CS"
-      ? "Edge is your ADC's minion lead at 10:00 relative to a typical support pick (lane minions only, from Riot's challenge stats)."
-      : "Edge is your bot duo's combined gold lead at 14:00 relative to a typical support pick (from match timelines, fetched for a random 12-25% of games).";
+      ? `Edge is your ADC's minion lead at 10:00 relative to ${typicalPick} (lane minions only, from Riot's challenge stats).`
+      : `Edge is your bot duo's combined gold lead at 14:00 relative to ${typicalPick} (from match timelines, fetched for a random 12-25% of games).`;
   const counter = perspective === "partner"
     ? "Synergy only removes both champions' overall strength, leaving what the pair adds together."
     : "Counter only removes both champions' overall strength, leaving the specific matchup.";
   return `${measure} ${perspective === "duo" ? "" : counter} Games are raw counts in this view; low-data rows lean on the champion's overall numbers.`;
 }
 
+// ADC sheet: the same columns, worded for your ADC as the row.
+function adcColumnExplanation(columnName) {
+  const model = currentModel();
+  const perspective = state.perspective;
+  const measure = model.unit === "pp"
+    ? "your team's chance of winning, in win-rate points"
+    : model.unit === "CS"
+      ? "your ADC's lane-minion lead at 10:00"
+      : "your bot duo's combined gold lead at 14:00";
+  const heldFixed = "The other eight champions, side, region and patch are held fixed, for a player in their main role with typical experience on the champion.";
+  const opponent = { pick: "the enemy ADC", support: "the enemy support", threats: "your ADC", partner: "your support", duo: "this lane" }[perspective];
+  const groupNote = groupMode() && perspective !== "duo"
+    ? " In Champ Groups detail every number is the pick-weighted average over the group's members." : "";
+  const explanations = {
+    rank: ["#", "Position in the current sort order. Click Edge, Counter only or Games in the header to re-sort."],
+    support: [groupMode() && perspective !== "duo" ? "ADC group" : "ADC", {
+      pick: "An ADC you could pick into the selected enemy ADC. Only ADCs with at least 0.4% of bot-lane picks are listed.",
+      support: "An ADC you could pick into the selected enemy support.",
+      threats: "An ADC the enemy might pick against your selected ADC.",
+      partner: "An ADC you could play with your selected support.",
+      duo: "An ADC option for your side of this lane.",
+    }[perspective]],
+    plot: ["Interval chart", "The dot is the best estimate of the Edge and the line is its 90% interval. Blue means the whole line is above zero (reliably better), red means below zero (reliably worse), and a hollow gray dot means the data can't yet tell it apart from a typical pick."],
+    edge: ["Edge", {
+      pick: `How much picking this ADC into the enemy ADC changes ${measure}, compared with a typical ADC pick. It adds up the ADC's overall strength, the ADC-vs-ADC matchup, how the supports that ADC usually lanes with play into yours, and the usual synergy with your own support.`,
+      support: `How much picking this ADC changes ${measure} when the enemy support is the selected one, compared with a typical ADC pick: the ADC's overall strength, how that support plays into this ADC, the matchup into the ADCs it usually lanes with, and the usual synergy with your support.`,
+      threats: `How much ${measure} changes for your ADC when the enemy picks this ADC instead of a typical one. Positive is good for you, negative means this ADC is a threat.`,
+      partner: `How much playing this ADC with your support changes ${measure}, compared with a typical ADC: the ADC's own strength plus what the pair adds together.`,
+      duo: `How much this ADC changes ${measure} in this lane, compared with the average option: ADC strength, synergy with your support, the matchup into the enemy ADC and how the enemy support plays into it.`,
+    }[perspective] + " " + heldFixed + groupNote],
+    probability: ["P(better)", "The probability that the true Edge is above zero. 50% means the data can't tell; above 90% or below 10% is a fairly confident call."],
+    counter: perspective === "partner"
+      ? ["Synergy only", `What this ADC and your support add together beyond each one's overall strength. The ± value is the half-width of the 90% interval.${groupNote}`]
+      : ["Counter only", `The pure matchup between this ADC and ${opponent}, with both champions' overall strength removed. ${perspective === "threats" ? "A negative value means it specifically beats your ADC." : "A positive value means it specifically beats this pick."} The ± value is the half-width of the 90% interval.${groupNote}`],
+    expected: ["Expected", `The ${model.unit === "pp" ? "win rate" : "lead"} to expect for your side in this lane, starting from even. Unlike Edge, it also includes ${opponent === "your ADC" ? "your ADC's" : `${opponent}'s`} overall strength.${groupNote}`],
+    raw: ["Raw WR", "The plain win rate of games with this pairing, with no controls at all: what most stats sites show. It mixes in both champions' overall strength, the other eight champions and who tends to play these picks."],
+    games: ["Games", `How many games in this region had this ADC ${perspective === "partner" ? "on the same team as" : "facing"} ${perspective === "duo" ? "the enemy ADC (any, if none is picked)" : "the selected champion"}. Rows under ${LOW_DATA_GAMES} games are tagged low.`],
+    exact: ["This exact lane", "How many games in this region had exactly this lane with this ADC (every picked champion matching). Usually far too few to judge on their own, which is why Edge is built from parts that each have many games."],
+  };
+  return explanations[columnName];
+}
+
 // What each table column means, worded for the current perspective and measure.
 function columnExplanation(columnName) {
   if (state.perspective === "blind") return blindExplanation(columnName);
+  if (isAdcSheet()) return adcColumnExplanation(columnName);
   const model = currentModel();
   const perspective = state.perspective;
   const measure = model.unit === "pp"
@@ -1399,11 +1681,19 @@ function renderMethod() {
   document.getElementById("sample-table").innerHTML = `<thead><tr><th>Region</th><th>Elo</th><th>Patch</th><th class="numeric">Games</th></tr></thead><tbody>${sampleRows}</tbody>`;
 }
 
+const SHEET_DEKS = {
+  support: "Which support to pick into an enemy ADC. Every number is adjusted for the rest of the draft, the enemy support, autofill, champion experience and elo, and comes with an honest interval.",
+  adc: "Which ADC to pick into an enemy bot lane. Every number is adjusted for the rest of the draft, your support, autofill, champion experience and elo, and comes with an honest interval.",
+};
 function syncFilterInputs() {
   for (const name of ["perspective", "region", "metric", "detail"]) {
     const input = document.querySelector(`input[name="${name}"][value="${state[name]}"]`);
     if (input) input.checked = true;
   }
+  elements.sheetSwitch.querySelectorAll("button[data-sheet]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.sheet === state.sheet)));
+  elements.sheetDek.textContent = SHEET_DEKS[state.sheet];
+  document.title = isAdcSheet() ? "ADC Counter Sheet" : "Support Counter Sheet";
+  document.querySelector('label[for="perspective-partner"]').textContent = isAdcSheet() ? "Partner for my support" : "Partner for my ADC";
 }
 
 function render() {
@@ -1434,15 +1724,16 @@ elements.grid.addEventListener("click", (event) => {
   if (!button) return;
   if (state.perspective === "blind") {
     const championId = Number(button.dataset.champion);
-    state.blindPool = state.blindPool.includes(championId)
-      ? state.blindPool.filter((poolChampionId) => poolChampionId !== championId)
-      : [...state.blindPool, championId];
+    const pool = currentPool();
+    setCurrentPool(pool.includes(championId)
+      ? pool.filter((poolChampionId) => poolChampionId !== championId)
+      : [...pool, championId]);
     savePool();
     renderPicker();
     renderSheet();
     return;
   }
-  state.championByPerspective[`${state.perspective}|${groupMode() ? "groups" : "champions"}`] = Number(button.dataset.champion);
+  state.championByPerspective[selectionKey()] = Number(button.dataset.champion);
   renderPicker();
   renderSheet();
 });
@@ -1463,10 +1754,29 @@ elements.sheet.addEventListener("focusin", (event) => {
 elements.sheet.addEventListener("focusout", hideTooltip);
 elements.search.addEventListener("input", () => { state.search = elements.search.value; renderPicker(); });
 const duoChoice = (value) => (value === "any" ? "any" : Number(value));
-elements.duoMyBot.addEventListener("change", () => { state.duoMyBot = duoChoice(elements.duoMyBot.value); renderSheet(); });
+elements.duoMyBot.addEventListener("change", () => {
+  // This box is your ADC on the support sheet and your support on the ADC sheet.
+  if (isAdcSheet()) state.duoMySupport = elements.duoMyBot.value;
+  else state.duoMyBot = duoChoice(elements.duoMyBot.value);
+  renderSheet();
+});
 elements.duoEnemyBot.addEventListener("change", () => { state.duoEnemyBot = duoChoice(elements.duoEnemyBot.value); renderSheet(); });
 elements.duoEnemySupport.addEventListener("change", () => { state.duoEnemySupport = elements.duoEnemySupport.value; renderSheet(); });
-elements.blindMyBot.addEventListener("change", () => { state.blindMyBot = elements.blindMyBot.value; renderSheet(); });
+elements.blindMyBot.addEventListener("change", () => {
+  if (isAdcSheet()) state.blindMySupport = elements.blindMyBot.value;
+  else state.blindMyBot = elements.blindMyBot.value;
+  renderSheet();
+});
+elements.sheetSwitch.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-sheet]");
+  if (!button || button.dataset.sheet === state.sheet) return;
+  state.sheet = button.dataset.sheet;
+  state.sortKey = "edge";
+  state.search = "";
+  elements.search.value = "";
+  saveFilters();
+  render();
+});
 elements.blindTail.addEventListener("change", () => { state.blindTail = Number(elements.blindTail.value); renderSheet(); });
 
 // Type-to-filter dropdowns. The <select> stays hidden underneath and keeps its change listeners above;
