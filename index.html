@@ -1023,6 +1023,9 @@ function badLuckOutcome(laneSet, bannedId, tailShare) {
   return { tail: collectedSum / collectedWeight, average: remainingSum / remainingWeight };
 }
 
+// Picks and bans are chosen by the average lane (expected outcome: each lane's value times how often
+// it happens, so a ban is worth roughly its pick share times how much worse you do against it). The
+// worst-tailShare average is reported alongside as the bad-luck view, but doesn't drive the choice.
 function blindPlan() {
   const analysis = isAdcSheet()
     ? buildBlindAnalysis(state.blindAdcPool, state.blindMySupport, "bot")
@@ -1032,20 +1035,20 @@ function blindPlan() {
     let best = null;
     for (const laneSet of analysis.laneSets) {
       const outcome = badLuckOutcome(laneSet, bannedId, tailShare);
-      if (outcome && (!best || outcome.tail > best.tail)) best = { pickId: laneSet.pickId, ...outcome };
+      if (outcome && (!best || outcome.average > best.average)) best = { pickId: laneSet.pickId, ...outcome };
     }
     return best;
   };
   const noBan = bestPickFor(null);
   const bans = analysis.banCandidates.map((bannedId) => ({ bannedId, ...bestPickFor(bannedId) }))
     .filter((ban) => ban.pickId !== undefined)
-    .sort((first, second) => second.tail - first.tail);
+    .sort((first, second) => second.average - first.average);
   const rows = analysis.laneSets.map((laneSet) => {
     const unbanned = badLuckOutcome(laneSet, null, tailShare);
     let bestBan = null;
     for (const bannedId of analysis.banCandidates) {
       const outcome = badLuckOutcome(laneSet, bannedId, tailShare);
-      if (outcome && (!bestBan || outcome.tail > bestBan.tail)) bestBan = { bannedId, ...outcome };
+      if (outcome && (!bestBan || outcome.average > bestBan.average)) bestBan = { bannedId, ...outcome };
     }
     return { ...laneSet, tail: unbanned.tail, bestBan };
   });
@@ -1381,15 +1384,15 @@ function renderBlindSheet() {
   const callHtml = `<div class="blind-call" role="note">
       <div class="blind-call-item" data-column="call-ban"><img src="${iconPath(best.bannedId)}" alt=""><div><span class="eyebrow">Ban</span><strong>${escapeHtml(championName(best.bannedId))}</strong></div></div>
       <div class="blind-call-item" data-column="call-blind"><img src="${iconPath(best.pickId)}" alt=""><div><span class="eyebrow">Blind</span><strong>${escapeHtml(championName(best.pickId))}</strong></div></div>
-      <p class="blind-call-note">Your worst ${tailPercent}% of lanes average <strong class="${valueClass(best.tail)}">${formatValue(best.tail)}${unit}</strong> with this ban, against <strong class="${valueClass(plan.noBan.tail)}">${formatValue(plan.noBan.tail)}${unit}</strong> blinding ${escapeHtml(championName(plan.noBan.pickId))} with no ban. The average lane is 0.</p>
+      <p class="blind-call-note">Your average lane is <strong class="${valueClass(best.average)}">${formatValue(best.average)}${unit}</strong> with this ban, against <strong class="${valueClass(plan.noBan.average)}">${formatValue(plan.noBan.average)}${unit}</strong> blinding ${escapeHtml(championName(plan.noBan.pickId))} with no ban (a typical player's lane is 0). Your worst ${tailPercent}% of lanes: <strong class="${valueClass(best.tail)}">${formatValue(best.tail)}${unit}</strong>.</p>
     </div>`;
 
-  const poolRows = plan.rows.slice().sort((first, second) => (second.bestBan ? second.bestBan.tail : -Infinity) - (first.bestBan ? first.bestBan.tail : -Infinity));
+  const poolRows = plan.rows.slice().sort((first, second) => (second.bestBan ? second.bestBan.average : -Infinity) - (first.bestBan ? first.bestBan.average : -Infinity));
   const poolBody = poolRows.map((row) => `<tr>
       <td data-column="blind-support">${championCell(row.pickId)}</td>
-      <td class="numeric" data-column="blind-tail"><span class="${valueClass(row.tail)}">${formatValue(row.tail)}</span></td>
-      <td data-column="blind-best-ban">${row.bestBan ? `<span class="support-cell"><img src="${iconPath(row.bestBan.bannedId)}" alt="" width="22" height="22" loading="lazy">${escapeHtml(championName(row.bestBan.bannedId))} <span class="${valueClass(row.bestBan.tail)}">${formatValue(row.bestBan.tail)}</span></span>` : "—"}</td>
       <td class="numeric" data-column="blind-average"><span class="${valueClass(row.average)}">${formatValue(row.average)}</span></td>
+      <td data-column="blind-best-ban">${row.bestBan ? `<span class="support-cell"><img src="${iconPath(row.bestBan.bannedId)}" alt="" width="22" height="22" loading="lazy">${escapeHtml(championName(row.bestBan.bannedId))} <span class="${valueClass(row.bestBan.average)}">${formatValue(row.bestBan.average)}</span></span>` : "—"}</td>
+      <td class="numeric" data-column="blind-tail"><span class="${valueClass(row.tail)}">${formatValue(row.tail)}</span></td>
       <td data-column="blind-adc-threats">${threatList(row.enemyBotThreats)}</td>
       <td data-column="blind-support-threats">${threatList(row.enemySupportThreats)}</td>
       <td class="optional" data-column="blind-partners">${row.partners ? threatList(row.partners) : "—"}</td>
@@ -1401,20 +1404,22 @@ function renderBlindSheet() {
       <td class="rank" data-column="ban-rank">${banIndex + 1}</td>
       <td data-column="ban-champion">${championCell(ban.bannedId)}</td>
       <td data-column="ban-then-blind">${championCell(ban.pickId)}</td>
+      <td class="numeric" data-column="ban-average"><span class="${valueClass(ban.average)}">${formatValue(ban.average)}</span></td>
+      <td class="numeric" data-column="ban-gain">${formatSigned(ban.average - plan.noBan.average, decimals + 1)}</td>
       <td class="numeric" data-column="ban-tail"><span class="${valueClass(ban.tail)}">${formatValue(ban.tail)}</span></td>
-      <td class="numeric" data-column="ban-gain">${formatSigned(ban.tail - plan.noBan.tail, decimals)}</td>
+      <td class="numeric" data-column="ban-tail-gain">${formatSigned(ban.tail - plan.noBan.tail, decimals + 1)}</td>
     </tr>`).join("");
 
   elements.sheet.innerHTML = `<div class="sheet-head"><div><h2>Blind &amp; ban for your pool</h2>
-      <p class="sheet-meta">Every bot lane a blind pick can land in, with ${partnerText} on your side and the enemy ADC and support drawn by how often each is played. Each lane is scored by the fitted model in ${measureText}, relative to the average lane. The plan below maximizes your worst ${tailPercent}% of lanes: the awful outcomes, not the average.</p></div></div>
+      <p class="sheet-meta">Every bot lane a blind pick can land in, with ${partnerText} on your side and the enemy ADC and support drawn by how often each is played. Each lane is scored by the fitted model in ${measureText}, relative to the average lane. The plan below maximizes your average lane (each lane weighted by how often it happens); your worst ${tailPercent}% of lanes, the awful outcomes, are shown alongside.</p></div></div>
     ${callHtml}
     <h3 class="blind-section-title">Your pool, blind</h3>
     <div class="table-wrap"><table>
       <thead><tr>
         <th data-column="blind-support" tabindex="0">${isAdcSheet() ? "ADC" : "Support"}</th>
-        <th class="numeric" data-column="blind-tail" tabindex="0">Worst ${tailPercent}%<br>no ban</th>
-        <th data-column="blind-best-ban" tabindex="0">Its best ban<br>→ worst ${tailPercent}%</th>
         <th class="numeric" data-column="blind-average" tabindex="0">Average<br>lane</th>
+        <th data-column="blind-best-ban" tabindex="0">Its best ban<br>→ average</th>
+        <th class="numeric" data-column="blind-tail" tabindex="0">Worst ${tailPercent}%<br>no ban</th>
         <th data-column="blind-adc-threats" tabindex="0">Worst enemy<br>ADCs</th>
         <th data-column="blind-support-threats" tabindex="0">Worst enemy<br>supports</th>
         <th class="optional" data-column="blind-partners" tabindex="0">Worst own<br>${partnerWord}s</th>
@@ -1429,8 +1434,10 @@ function renderBlindSheet() {
         <th data-column="ban-rank" tabindex="0">#</th>
         <th data-column="ban-champion" tabindex="0">Ban</th>
         <th data-column="ban-then-blind" tabindex="0">Then blind</th>
-        <th class="numeric" data-column="ban-tail" tabindex="0">Worst ${tailPercent}%</th>
+        <th class="numeric" data-column="ban-average" tabindex="0">Average<br>lane</th>
         <th class="numeric" data-column="ban-gain" tabindex="0">Gain vs<br>no ban</th>
+        <th class="numeric" data-column="ban-tail" tabindex="0">Worst ${tailPercent}%</th>
+        <th class="numeric" data-column="ban-tail-gain" tabindex="0">Worst ${tailPercent}%<br>gain</th>
       </tr></thead>
       <tbody>${banBody}</tbody>
     </table></div>
@@ -1440,22 +1447,24 @@ function renderBlindSheet() {
 function blindExplanation(columnName) {
   const tailPercent = Math.round(state.blindTail * 100);
   const explanations = {
-    "call-ban": ["Ban", `The single ban that most improves the best blind pick in your pool, judged by your worst ${tailPercent}% of lanes. A ban is scored only by what it takes away from the enemy; in the real draft your team can't pick it either, but that side effect is ignored here.`],
-    "call-blind": ["Blind", `The pool champion whose worst ${tailPercent}% of lanes are least bad once that ban is in.`],
+    "call-ban": ["Ban", "The single ban that most improves the best blind pick in your pool, judged by your average lane: roughly how often the enemy plays that champion times how much worse you do against them. A ban is scored only by what it takes away from the enemy; in the real draft your team can't pick it either, but that side effect is ignored here."],
+    "call-blind": ["Blind", "The pool champion with the best average lane once that ban is in."],
     "blind-support": ["Support", "A champion in your pool. Click supports in the grid to add or remove them."],
-    "blind-tail": [`Worst ${tailPercent}% (no ban)`, `Average outcome over this pick's worst ${tailPercent}% of possible lanes, weighting each lane by how often that ADC and support combination is played. This is the number to watch for blind picks: how bad it gets when the draft goes against you. Negative is worse than an average lane.`],
-    "blind-best-ban": ["Its best ban", `If you're going to blind this champion, the ban that helps its worst ${tailPercent}% of lanes most, and what that worst ${tailPercent}% becomes.`],
+    "blind-tail": [`Worst ${tailPercent}% (no ban)`, `Average outcome over this pick's worst ${tailPercent}% of possible lanes, weighting each lane by how often that ADC and support combination is played: how bad it gets when the draft goes against you. Negative is worse than an average lane.`],
+    "blind-best-ban": ["Its best ban", "If you're going to blind this champion, the ban that raises its average lane most, and what that average becomes."],
     "blind-average": ["Average lane", "This pick's outcome averaged over every possible lane, weighted by pick share. Includes the champion's overall strength, so a strong champion can have a good average and still an awful worst case."],
     "blind-adc-threats": ["Worst enemy ADCs", "The enemy ADCs that leave this pick worst off, with your average outcome when that ADC is on the other side (any support with them). A ban weighs this against how often each one is actually played, so a rare threat may still not be the best ban."],
     "blind-support-threats": ["Worst enemy supports", "The enemy supports that leave this pick worst off, with your average outcome when they're on the other side (any ADC with them)."],
     "blind-partners": ["Worst own ADCs", "The ADCs on your own team that leave this pick worst off, relative to a typical support with that ADC: the synergy side of blindability. Only shown when your ADC is anyone (solo queue)."],
     "blind-matchup-spread": ["Matchup spread", "How much this pick's edge over a typical support swings across enemy bot lanes (1 SD). Low means it's equally fine into everything, which is what blind-pickable means. Computed from the model's shrunk estimates, which already correct for small samples the way a method-of-moments correction does on raw win rates (if anything it errs low)."],
     "blind-synergy-spread": ["Synergy spread", "How much this pick's edge over a typical support swings across the ADCs you might get on your own team (1 SD). Low means it works with whoever your ADC picks."],
-    "ban-rank": ["#", "Bans ranked by how good your best blind pick's worst lanes become."],
+    "ban-rank": ["#", "Bans ranked by how good your best blind pick's average lane becomes."],
     "ban-champion": ["Ban", "A champion to ban, scored by removing it from the enemy's options only. Banning a champion in your own pool also means you can't blind it."],
     "ban-then-blind": ["Then blind", "The best blind pick from your pool once this champion is banned."],
+    "ban-average": ["Average lane", "That pick's average lane with this ban in place, every remaining lane weighted by how often it's played."],
+    "ban-gain": ["Gain vs no ban", "How much this ban raises your average lane compared with the best blind pick and no ban. About the enemy's pick share for that champion times how much worse you do against them."],
     "ban-tail": [`Worst ${tailPercent}%`, `That pick's worst ${tailPercent}% of lanes with this ban in place.`],
-    "ban-gain": ["Gain vs no ban", "How much this ban improves your worst lanes compared with the best blind pick and no ban."],
+    "ban-tail-gain": [`Worst ${tailPercent}% gain`, `How much this ban improves your worst ${tailPercent}% of lanes. A rare but lopsided matchup can score high here and low on the average.`],
   };
   if (isAdcSheet()) {
     explanations["blind-support"] = ["ADC", "A champion in your pool. Click ADCs in the grid to add or remove them."];
