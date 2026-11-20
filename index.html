@@ -182,6 +182,7 @@ tbody tr { outline: none; }
 .value-good { color: var(--good); font-weight: 600; }
 .threat-list { display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
 .threat-list .support-cell img { width: 22px; height: 22px; }
+.threat-share { color: var(--ink-2); font-size: 0.92em; }
 
 .tooltip { position: fixed; z-index: 20; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--rule); border-radius: var(--radius); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.14); padding: 10px 12px; font-size: 12px; min-width: 220px; max-width: 280px; }
 .tooltip h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
@@ -977,7 +978,8 @@ function describeLanes(lanes, partnerVaries) {
     accumulate(byMyBot, lane.partnerId, lane.edge, lane.weight);
     accumulate(byEnemyPair, `${lane.enemyBotId}|${lane.enemySupportId}`, lane.edge, lane.weight);
   }
-  const ranked = (table) => [...table.entries()].map(([championId, entry]) => ({ championId, value: entry.sum / entry.weight }))
+  // share: how often this champion fills that slot across this pick's lanes (its pick rate there).
+  const ranked = (table) => [...table.entries()].map(([championId, entry]) => ({ championId, value: entry.sum / entry.weight, share: entry.weight / weightSum }))
     .sort((first, second) => first.value - second.value);
   const weightedSpread = (table) => {
     const entries = [...table.values()];
@@ -1149,8 +1151,8 @@ function renderPoolPicker() {
   // Your partner: an ADC on the support sheet, a support on the ADC sheet.
   const partnerChoice = isAdcSheet() ? state.blindMySupport : state.blindMyBot;
   elements.blindPartnerLabel.textContent = isAdcSheet() ? "Your support" : "Your ADC";
-  elements.blindMyBot.innerHTML = `<option value="any" ${partnerChoice === "any" ? "selected" : ""}>Anyone (solo queue)</option>`
-    + alphabeticalOptionHtml(isAdcSheet() ? data.supports : data.bots, partnerChoice, " (duo)");
+  elements.blindMyBot.innerHTML = `<option value="any" ${partnerChoice === "any" ? "selected" : ""}>Anyone (not known yet)</option>`
+    + alphabeticalOptionHtml(isAdcSheet() ? data.supports : data.bots, partnerChoice, "");
   elements.blindTail.value = String(state.blindTail);
 }
 
@@ -1373,12 +1375,13 @@ function renderBlindSheet() {
   const formatValue = (value) => (value === null || value === undefined ? "—" : formatSigned(value, decimals));
   const valueClass = (value) => (value < 0 ? "value-bad" : "value-good");
   const championCell = (championId, size = 28) => `<span class="support-cell"><img src="${iconPath(championId)}" alt="" width="${size}" height="${size}" loading="lazy">${escapeHtml(championName(championId))}</span>`;
-  const threatList = (threats) => `<span class="threat-list">${threats.slice(0, 2).map((threat) =>
-    `<span class="support-cell"><img src="${iconPath(threat.championId)}" alt="" width="22" height="22" loading="lazy">${escapeHtml(championName(threat.championId))} <span class="${valueClass(threat.value)}">${formatValue(threat.value)}</span></span>`).join("")}</span>`;
+  const threatList = (threats) => `<span class="threat-list">${threats.slice(0, 3).map((threat) =>
+    `<span class="support-cell"><img src="${iconPath(threat.championId)}" alt="" width="22" height="22" loading="lazy">${escapeHtml(championName(threat.championId))} <span class="${valueClass(threat.value)}">${formatValue(threat.value)}</span><span class="threat-share">/${(100 * threat.share).toFixed(1)}%</span></span>`).join("")}</span>`;
+  const beforeAfter = (before, after) => `<span class="${valueClass(before)}">${formatValue(before)}</span> → <span class="${valueClass(after)}">${formatValue(after)}</span>`;
   const tailPercent = Math.round(state.blindTail * 100);
   const best = plan.bans[0];
   const partnerChoice = isAdcSheet() ? state.blindMySupport : state.blindMyBot;
-  const partnerText = partnerChoice === "any" ? `any ${partnerWord} (solo queue)` : escapeHtml(championName(Number(partnerChoice)));
+  const partnerText = partnerChoice === "any" ? `any ${partnerWord} (drawn by pick rate)` : escapeHtml(championName(Number(partnerChoice)));
   const measureText = model.unit === "pp" ? "win-rate points" : model.unit === "CS" ? "lane CS at 10:00" : "bot-duo gold at 14:00";
 
   const callHtml = `<div class="blind-call" role="note">
@@ -1387,17 +1390,20 @@ function renderBlindSheet() {
       <p class="blind-call-note">Your average lane is <strong class="${valueClass(best.average)}">${formatValue(best.average)}${unit}</strong> with this ban, against <strong class="${valueClass(plan.noBan.average)}">${formatValue(plan.noBan.average)}${unit}</strong> blinding ${escapeHtml(championName(plan.noBan.pickId))} with no ban (a typical player's lane is 0). Your worst ${tailPercent}% of lanes: <strong class="${valueClass(best.tail)}">${formatValue(best.tail)}${unit}</strong>.</p>
     </div>`;
 
+  // Own-partner columns only mean something when your partner isn't fixed.
+  const partnerVaries = partnerChoice === "any";
+  const unitName = model.unit === "pp" ? "win-rate pp" : model.unit === "CS" ? "CS at 10:00" : "gold at 14:00";
   const poolRows = plan.rows.slice().sort((first, second) => (second.bestBan ? second.bestBan.average : -Infinity) - (first.bestBan ? first.bestBan.average : -Infinity));
   const poolBody = poolRows.map((row) => `<tr>
       <td data-column="blind-support">${championCell(row.pickId)}</td>
-      <td class="numeric" data-column="blind-average"><span class="${valueClass(row.average)}">${formatValue(row.average)}</span></td>
-      <td data-column="blind-best-ban">${row.bestBan ? `<span class="support-cell"><img src="${iconPath(row.bestBan.bannedId)}" alt="" width="22" height="22" loading="lazy">${escapeHtml(championName(row.bestBan.bannedId))} <span class="${valueClass(row.bestBan.average)}">${formatValue(row.bestBan.average)}</span></span>` : "—"}</td>
-      <td class="numeric" data-column="blind-tail"><span class="${valueClass(row.tail)}">${formatValue(row.tail)}</span></td>
+      <td data-column="blind-best-ban">${row.bestBan ? `<span class="support-cell"><img src="${iconPath(row.bestBan.bannedId)}" alt="" width="22" height="22" loading="lazy">${escapeHtml(championName(row.bestBan.bannedId))}</span>` : "—"}</td>
+      <td class="numeric" data-column="blind-average">${row.bestBan ? beforeAfter(row.average, row.bestBan.average) : formatValue(row.average)}</td>
+      <td class="numeric" data-column="blind-tail">${row.bestBan ? beforeAfter(row.tail, row.bestBan.tail) : formatValue(row.tail)}</td>
       <td data-column="blind-adc-threats">${threatList(row.enemyBotThreats)}</td>
       <td data-column="blind-support-threats">${threatList(row.enemySupportThreats)}</td>
-      <td class="optional" data-column="blind-partners">${row.partners ? threatList(row.partners) : "—"}</td>
+      ${partnerVaries ? `<td class="optional" data-column="blind-partners">${threatList(row.partners)}</td>` : ""}
       <td class="numeric optional" data-column="blind-matchup-spread">${row.matchupSpread.toFixed(decimals)}</td>
-      <td class="numeric optional" data-column="blind-synergy-spread">${row.synergySpread === null ? "—" : row.synergySpread.toFixed(decimals)}</td>
+      ${partnerVaries ? `<td class="numeric optional" data-column="blind-synergy-spread">${row.synergySpread.toFixed(decimals)}</td>` : ""}
     </tr>`).join("");
 
   const banBody = plan.bans.slice(0, 8).map((ban, banIndex) => `<tr>
@@ -1413,18 +1419,18 @@ function renderBlindSheet() {
   elements.sheet.innerHTML = `<div class="sheet-head"><div><h2>Blind &amp; ban for your pool</h2>
       <p class="sheet-meta">Every bot lane a blind pick can land in, with ${partnerText} on your side and the enemy ADC and support drawn by how often each is played. Each lane is scored by the fitted model in ${measureText}, relative to the average lane. The plan below maximizes your average lane (each lane weighted by how often it happens); your worst ${tailPercent}% of lanes, the awful outcomes, are shown alongside.</p></div></div>
     ${callHtml}
-    <h3 class="blind-section-title">Your pool, blind</h3>
+    <h3 class="blind-section-title">Your pool's blind-pick stats <span class="sheet-meta">(values in ${unitName}, relative to a typical lane)</span></h3>
     <div class="table-wrap"><table>
       <thead><tr>
         <th data-column="blind-support" tabindex="0">${isAdcSheet() ? "ADC" : "Support"}</th>
-        <th class="numeric" data-column="blind-average" tabindex="0">Average<br>lane</th>
-        <th data-column="blind-best-ban" tabindex="0">Its best ban<br>→ average</th>
-        <th class="numeric" data-column="blind-tail" tabindex="0">Worst ${tailPercent}%<br>no ban</th>
-        <th data-column="blind-adc-threats" tabindex="0">Worst enemy<br>ADCs</th>
-        <th data-column="blind-support-threats" tabindex="0">Worst enemy<br>supports</th>
-        <th class="optional" data-column="blind-partners" tabindex="0">Worst own<br>${partnerWord}s</th>
-        <th class="numeric optional" data-column="blind-matchup-spread" tabindex="0">Matchup<br>spread</th>
-        <th class="numeric optional" data-column="blind-synergy-spread" tabindex="0">Synergy<br>spread</th>
+        <th data-column="blind-best-ban" tabindex="0">Best ban</th>
+        <th class="numeric" data-column="blind-average" tabindex="0">Lane<br>before → after</th>
+        <th class="numeric" data-column="blind-tail" tabindex="0">Worst ${tailPercent}%<br>before → after</th>
+        <th data-column="blind-adc-threats" tabindex="0">Worst enemy ADCs<br>(${unitLabel(model).trim()} / pick rate)</th>
+        <th data-column="blind-support-threats" tabindex="0">Worst enemy supports<br>(${unitLabel(model).trim()} / pick rate)</th>
+        ${partnerVaries ? `<th class="optional" data-column="blind-partners" tabindex="0">Worst own ${partnerWord}s<br>(${unitLabel(model).trim()} / pick rate)</th>` : ""}
+        <th class="numeric optional" data-column="blind-matchup-spread" tabindex="0">Matchup<br>spread (SD)</th>
+        ${partnerVaries ? `<th class="numeric optional" data-column="blind-synergy-spread" tabindex="0">Synergy<br>spread (SD)</th>` : ""}
       </tr></thead>
       <tbody>${poolBody}</tbody>
     </table></div>
@@ -1450,12 +1456,12 @@ function blindExplanation(columnName) {
     "call-ban": ["Ban", "The single ban that most improves the best blind pick in your pool, judged by your average lane: roughly how often the enemy plays that champion times how much worse you do against them. A ban is scored only by what it takes away from the enemy; in the real draft your team can't pick it either, but that side effect is ignored here."],
     "call-blind": ["Blind", "The pool champion with the best average lane once that ban is in."],
     "blind-support": ["Support", "A champion in your pool. Click supports in the grid to add or remove them."],
-    "blind-tail": [`Worst ${tailPercent}% (no ban)`, `Average outcome over this pick's worst ${tailPercent}% of possible lanes, weighting each lane by how often that ADC and support combination is played: how bad it gets when the draft goes against you. Negative is worse than an average lane.`],
-    "blind-best-ban": ["Its best ban", "If you're going to blind this champion, the ban that raises its average lane most, and what that average becomes."],
-    "blind-average": ["Average lane", "This pick's outcome averaged over every possible lane, weighted by pick share. Includes the champion's overall strength, so a strong champion can have a good average and still an awful worst case."],
-    "blind-adc-threats": ["Worst enemy ADCs", "The enemy ADCs that leave this pick worst off, with your average outcome when that ADC is on the other side (any support with them). A ban weighs this against how often each one is actually played, so a rare threat may still not be the best ban."],
-    "blind-support-threats": ["Worst enemy supports", "The enemy supports that leave this pick worst off, with your average outcome when they're on the other side (any ADC with them)."],
-    "blind-partners": ["Worst own ADCs", "The ADCs on your own team that leave this pick worst off, relative to a typical support with that ADC: the synergy side of blindability. Only shown when your ADC is anyone (solo queue)."],
+    "blind-tail": [`Worst ${tailPercent}% before → after`, `Average outcome over this pick's worst ${tailPercent}% of possible lanes (each lane weighted by how often that ADC and support combination is played), with no ban → with its best ban: how bad it gets when the draft goes against you. Negative is worse than a typical lane.`],
+    "blind-best-ban": ["Best ban", "If you're going to blind this champion, the ban that raises its average lane most."],
+    "blind-average": ["Lane before → after", "This pick's outcome averaged over every possible lane, weighted by pick rate, with no ban → with its best ban. Includes the champion's overall strength, so a strong champion can have a good average and still an awful worst case."],
+    "blind-adc-threats": ["Worst enemy ADCs", "The three enemy ADCs that leave this pick worst off: your average outcome when that ADC is on the other side (any support with them) / how often that ADC is the enemy. A ban weighs the two together, so a rare threat may still not be the best ban."],
+    "blind-support-threats": ["Worst enemy supports", "The three enemy supports that leave this pick worst off: your average outcome when they're on the other side (any ADC with them) / how often they're the enemy support."],
+    "blind-partners": ["Worst own ADCs", "The ADCs on your own team that leave this pick worst off, relative to a typical support with that ADC / how often you get that ADC: the synergy side of blindability. Shown when your ADC is set to anyone; with a specific ADC there's only one teammate, so there's nothing to rank."],
     "blind-matchup-spread": ["Matchup spread", "How much this pick's edge over a typical support swings across enemy bot lanes (1 SD). Low means it's equally fine into everything, which is what blind-pickable means. Computed from the model's shrunk estimates, which already correct for small samples the way a method-of-moments correction does on raw win rates (if anything it errs low)."],
     "blind-synergy-spread": ["Synergy spread", "How much this pick's edge over a typical support swings across the ADCs you might get on your own team (1 SD). Low means it works with whoever your ADC picks."],
     "ban-rank": ["#", "Bans ranked by how good your best blind pick's average lane becomes."],
@@ -1469,7 +1475,8 @@ function blindExplanation(columnName) {
   if (isAdcSheet()) {
     explanations["blind-support"] = ["ADC", "A champion in your pool. Click ADCs in the grid to add or remove them."];
     explanations["blind-support-threats"] = ["Worst enemy supports", "The enemy supports that leave this pick worst off, with your average outcome when they're on the other side (any ADC with them)."];
-    explanations["blind-partners"] = ["Worst own supports", "The supports on your own team that leave this pick worst off, relative to a typical ADC with that support: the synergy side of blindability. Only shown when your support is anyone (solo queue)."];
+    explanations["blind-partners"] = ["Worst own supports", "The supports on your own team that leave this pick worst off, relative to a typical ADC with that support / how often you get that support: the synergy side of blindability. Shown when your support is set to anyone; with a specific support there's only one teammate, so there's nothing to rank."];
+    explanations["blind-matchup-spread"] = ["Matchup spread", "How much this pick's edge over a typical ADC swings across enemy bot lanes (1 SD). Low means it's equally fine into everything, which is what blind-pickable means. Computed from the model's shrunk estimates, which already correct for small samples (if anything it errs low)."];
     explanations["blind-synergy-spread"] = ["Synergy spread", "How much this pick's edge over a typical ADC swings across the supports you might get on your own team (1 SD). Low means it works with whoever your support picks."];
   }
   return explanations[columnName];
