@@ -300,11 +300,6 @@ footer p { max-width: 95ch; }
     </div>
     <div class="duo-pickers" id="blind-options" hidden>
       <label><span class="eyebrow" id="blind-partner-label">Your ADC</span><select id="blind-my-bot"></select></label>
-      <label><span class="eyebrow">Awful outcome means</span><select id="blind-tail">
-        <option value="0.05">Your worst 5% of lanes</option>
-        <option value="0.1">Your worst 10% of lanes</option>
-        <option value="0.25">Your worst 25% of lanes</option>
-      </select></label>
     </div>
   </aside>
 
@@ -412,7 +407,6 @@ const elements = {
   duoEnemySupport: document.getElementById("duo-enemy-support"),
   blindOptions: document.getElementById("blind-options"),
   blindMyBot: document.getElementById("blind-my-bot"),
-  blindTail: document.getElementById("blind-tail"),
   duoMyLabel: document.getElementById("duo-my-label"),
   blindPartnerLabel: document.getElementById("blind-partner-label"),
   sheetSwitch: document.getElementById("sheet-switch"),
@@ -1153,7 +1147,6 @@ function renderPoolPicker() {
   elements.blindPartnerLabel.textContent = isAdcSheet() ? "Your support" : "Your ADC";
   elements.blindMyBot.innerHTML = `<option value="any" ${partnerChoice === "any" ? "selected" : ""}>Anyone (not known yet)</option>`
     + alphabeticalOptionHtml(isAdcSheet() ? data.supports : data.bots, partnerChoice, "");
-  elements.blindTail.value = String(state.blindTail);
 }
 
 function renderDuoPickers() {
@@ -1325,12 +1318,10 @@ function renderSheet() {
       <td data-column="support" title="${escapeHtml(entityTitle(rowSource, rowsRole, row.rowId))}"><span class="support-cell">${entityIcon(rowSource, rowsRole, row.rowId, 28)}${escapeHtml(entityName(rowSource, rowsRole, row.rowId))}</span></td>
       <td class="plot-cell" data-column="plot">${plotSvg(row, limit, "edge")}</td>
       <td class="numeric" data-column="edge"><span class="edge-value">${formatSigned(row.edge, decimals)}</span><span class="interval-text">${formatSigned(row.edgeLow, decimals)} to ${formatSigned(row.edgeHigh, decimals)}</span></td>
-      <td class="numeric" data-column="probability">${formatPercent(row.probability, 0)}</td>
       ${showCounter ? `<td class="numeric optional" data-column="counter">${formatSigned(row.counter, decimals)}<span class="interval-text">±${(Math.abs(row.counterHigh - row.counterLow) / 2).toFixed(decimals)}</span></td>` : ""}
       ${showExpected ? `<td class="numeric optional" data-column="expected">${expectedText}</td>` : ""}
       ${showRawWinRate ? `<td class="numeric optional" data-column="raw">${formatPercent(row.rawWinRate)}</td>` : ""}
       <td class="numeric ${lowData ? "low-data" : ""}" data-column="games">${formatInteger(row.games)}${lowData ? '<span class="low-data-tag">low</span>' : ""}</td>
-      ${isDuo ? `<td class="numeric" data-column="exact">${formatInteger(row.exactGames)}</td>` : ""}
     </tr>`;
   }).join("");
 
@@ -1347,12 +1338,11 @@ function renderSheet() {
           <th data-column="rank" tabindex="0">#</th><th data-column="support" tabindex="0">${isAdcSheet() ? "ADC" : "Support"}</th>
           <th class="axis-head" data-column="plot" tabindex="0" aria-label="${edgeHeader} chart">${axisSvg(limit, decimals > 0 ? 1 : 0)}</th>
           <th class="numeric" data-column="edge">${sortButton("edge", twoLines([edgeHeaderLines[0], `${edgeHeaderLines[1]} (${units.trim()})`]))}</th>
-          <th class="numeric" data-column="probability" tabindex="0">${twoLines(["P", "(better)"])}</th>
           ${showCounter ? `<th class="numeric optional" data-column="counter">${sortButton("counter", twoLines(counterHeaderLines))}</th>` : ""}
           ${showExpected ? `<th class="numeric optional" data-column="expected" tabindex="0">${twoLines(expectedHeaderLines)}</th>` : ""}
           ${showRawWinRate ? `<th class="numeric optional" data-column="raw" tabindex="0">${twoLines(isDuo ? ["Raw WR", `vs ${enemyBotName}`] : ["Raw", "WR"])}</th>` : ""}
           <th class="numeric" data-column="games">${sortButton("games", isDuo ? twoLines(["Games", `vs ${enemyBotName}`]) : "Games")}</th>
-          ${isDuo ? `<th class="numeric" data-column="exact" tabindex="0">${twoLines(["This exact", "lane"])}</th>` : ""}        </tr></thead>
+        </tr></thead>
         <tbody>${bodyHtml}</tbody>
       </table>
     </div>
@@ -1793,7 +1783,6 @@ elements.sheetSwitch.addEventListener("click", (event) => {
   saveFilters();
   render();
 });
-elements.blindTail.addEventListener("change", () => { state.blindTail = Number(elements.blindTail.value); renderSheet(); });
 
 // Type-to-filter dropdowns. The <select> stays hidden underneath and keeps its change listeners above;
 // picking from the list sets its value and fires "change", so nothing else needed to know about this.
