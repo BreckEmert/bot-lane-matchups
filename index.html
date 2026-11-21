@@ -95,6 +95,15 @@ a { color: inherit; }
 .segmented label:hover { color: var(--ink); }
 .segmented input:checked + label:hover { color: var(--selected-text); }
 .segmented input:disabled + label { opacity: 0.4; cursor: not-allowed; }
+/* On/off switch: the track sits left of its label; the native checkbox stays focusable underneath. */
+.toggle { display: inline-flex; align-items: center; gap: 10px; align-self: flex-end; padding-block: 6px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.toggle input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.toggle-track { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: var(--baseline); transition: background-color 120ms ease; }
+.toggle-track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); transition: transform 120ms ease; }
+.toggle input:checked + .toggle-track { background: var(--accent); }
+.toggle input:checked + .toggle-track::after { transform: translateX(14px); }
+.toggle input:checked ~ span:last-child { color: var(--ink); }
+.toggle input:focus-visible + .toggle-track { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------- main layout ---------- */
 .layout { display: grid; grid-template-columns: 268px minmax(0, 1fr); gap: 28px; padding-block: 22px 40px; align-items: start; }
@@ -154,9 +163,6 @@ th.numeric, td.numeric { text-align: right; font-variant-numeric: tabular-nums; 
 td.rank { color: var(--muted); width: 28px; font-variant-numeric: tabular-nums; }
 .support-cell { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .support-cell img { width: 28px; height: 28px; border-radius: 5px; }
-/* A group's icon: up to four member icons in a 2x2 tile, sized by the inline width/height. */
-.group-icon { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1px; flex: none; border-radius: 6px; overflow: hidden; background: var(--rule); }
-.group-icon img, .support-cell .group-icon img, .sheet-head .group-icon img, .champion-button .group-icon img { width: 100%; height: 100%; border-radius: 0; display: block; object-fit: cover; }
 .plot-cell { width: 36%; min-width: 200px; padding-block: 2px; }
 .plot-cell svg { display: block; width: 100%; height: 28px; overflow: visible; }
 .axis-head svg { display: block; width: 100%; height: 18px; overflow: visible; }
@@ -243,12 +249,16 @@ footer p { max-width: 95ch; }
     <fieldset class="filter-group">
       <legend class="eyebrow">View</legend>
       <div class="segmented">
-        <input type="radio" name="perspective" id="perspective-pick" value="pick" checked><label for="perspective-pick">Pick into ADC</label>
-        <input type="radio" name="perspective" id="perspective-support" value="support"><label for="perspective-support">Pick into support</label>
-        <input type="radio" name="perspective" id="perspective-threats" value="threats"><label for="perspective-threats">Threats to my ADC</label>
-        <input type="radio" name="perspective" id="perspective-partner" value="partner"><label for="perspective-partner">Partner for my ADC</label>
-        <input type="radio" name="perspective" id="perspective-duo" value="duo"><label for="perspective-duo">2v2 lane</label>
+        <input type="radio" name="perspective" id="perspective-duo" value="duo" checked><label for="perspective-duo">2v2 lane</label>
         <input type="radio" name="perspective" id="perspective-blind" value="blind"><label for="perspective-blind">Blind &amp; ban</label>
+      </div>
+    </fieldset>
+    <fieldset class="filter-group">
+      <legend class="eyebrow">Measure</legend>
+      <div class="segmented" id="metric-options">
+        <input type="radio" name="metric" id="metric-win" value="win" checked><label for="metric-win">Win rate</label>
+        <input type="radio" name="metric" id="metric-cs" value="lane_cs_at_10"><label for="metric-cs">Lane CS@10</label>
+        <input type="radio" name="metric" id="metric-gold" value="lane_gold_at_14"><label for="metric-gold">Bot gold@14</label>
       </div>
     </fieldset>
     <fieldset class="filter-group">
@@ -265,21 +275,11 @@ footer p { max-width: 95ch; }
         <input type="radio" name="elo" id="elo-diamond" value="diamond_plus" checked><label for="elo-diamond" title="All numbers are for Diamond, Master, Grandmaster and Challenger games">Diamond+</label>
       </div>
     </fieldset>
-    <fieldset class="filter-group" id="detail-filter">
-      <legend class="eyebrow">Detail</legend>
-      <div class="segmented">
-        <input type="radio" name="detail" id="detail-champions" value="champions" checked><label for="detail-champions">Champ</label>
-        <input type="radio" name="detail" id="detail-groups" value="groups"><label for="detail-groups" title="Group vs group, using your Champion Groups">Champ Groups</label>
-      </div>
-    </fieldset>
-    <fieldset class="filter-group">
-      <legend class="eyebrow">Measure</legend>
-      <div class="segmented" id="metric-options">
-        <input type="radio" name="metric" id="metric-win" value="win" checked><label for="metric-win">Win rate</label>
-        <input type="radio" name="metric" id="metric-cs" value="lane_cs_at_10"><label for="metric-cs">Lane CS@10</label>
-        <input type="radio" name="metric" id="metric-gold" value="lane_gold_at_14"><label for="metric-gold">Bot gold@14</label>
-      </div>
-    </fieldset>
+    <label class="toggle" id="detail-filter" title="Rare matchups have few games of their own. With this on, each champion's matchups also learn from similar champions (from the Champion Groups), but only as far as the data says those champions really play alike. Rows are still single champions.">
+      <input type="checkbox" id="detail-groups" role="switch">
+      <span class="toggle-track" aria-hidden="true"></span>
+      <span>Get more statistical power by grouping similar champions</span>
+    </label>
   </form>
 </div>
 
@@ -328,7 +328,7 @@ footer p { max-width: 95ch; }
     <div class="nuance"><h3>Autofill and secondary roles</h3><p>Support is the most-filled role, and filled players lose more and pick simpler champions. <span class="fix">Riot's own role-assignment field (primary / secondary / autofill / fill) is a control for every player, along with role swaps.</span></p></div>
     <div class="nuance"><h3>One-tricks vs first-timers</h3><p>Niche picks are played by mains, popular ones by everyone. Mastery is only readable after the game, though, and players who win on a new champion keep playing it, so a fine "first-timer" band would partly measure the result. <span class="fix">Each bot laner's mastery enters in coarse bands (under 50k, 50–200k, over 200k) that a few later games rarely change, and account level flags fresh accounts.</span></p></div>
     <div class="nuance"><h3>Elo changes matchups</h3><p>A hook is a different threat in Emerald than in Master. <span class="fix">Diamond+ and Emerald share a common counter term plus an elo deviation whose size is estimated, so Emerald fills sparse Diamond+ cells only as much as the two actually agree.</span></p></div>
-    <div class="nuance"><h3>Small samples and the winner's curse</h3><p>Sort 1,000 matchup cells by raw win rate and the top is mostly 40-game flukes. <span class="fix">Every block's prior width is fitted by empirical Bayes, so rare cells shrink toward zero and every row carries a 90% interval and a probability.</span></p></div>
+    <div class="nuance"><h3>Small samples and the winner's curse</h3><p>Sort 1,000 matchup cells by raw win rate and the top is mostly 40-game flukes. <span class="fix">Every block's prior width is fitted by empirical Bayes, so rare cells shrink toward zero and every row carries a 90% interval.</span></p></div>
     <div class="nuance"><h3>Who gets sampled</h3><p>Players sampled because they are Diamond today got there by winning. In their older, lower-elo games their team won about 57% of the time, against about 50% in their Diamond+ games. <span class="fix">The model controls for how many sampled players sit on each team, separately for each elo bracket, so their streaks don't leak into champion numbers. Each game's elo comes from the average of all ten ranks, not the sampled player's.</span></p></div>
     <div class="nuance"><h3>No peeking at the result</h3><p>Conditioning on game length, gold or KDA hides the very effect being measured, and post-game rank leaks the result through LP. <span class="fix">Only pre-game facts are controls. Remakes, AFK and griefing surrenders are removed before fitting.</span></p></div>
   </div>
@@ -368,14 +368,13 @@ footer p { max-width: 95ch; }
 
 const state = {
   sheet: "support",             // "support" (rows are supports) or "adc" (rows are ADCs)
-  perspective: "pick",
+  perspective: "duo",           // "duo" (2v2 lane) or "blind" (Blind & ban)
   region: "NA",
   bracket: "diamond_plus",
   metric: "win",
-  detail: "champions",          // "champions" or "groups" (group-vs-group tables from Champion Groups)
-  championByPerspective: {},    // keyed by "<perspective>|<detail>"; holds a champion id or a group index
-  duoMyBot: null,
-  duoEnemyBot: null,
+  detail: "champions",          // "groups" = the fit that pools matchups within Champion Groups
+  duoMyBot: "any",
+  duoEnemyBot: null,            // null until the data loads: then the most-picked ADC
   duoEnemySupport: "any",
   search: "",
   sortKey: "edge",
@@ -422,12 +421,10 @@ function championName(championId) {
   return champion ? champion.name : String(championId);
 }
 function iconPath(championId) { return `icons/${championId}.png`; }
-// The 2v2 ADC choices can be "any" (Not picked yet).
-function duoBotLabel(choice) { return choice === "any" ? "any ADC" : championName(choice); }
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
 }
-// "Champ" detail reads the unpooled fit; "Champ Groups" reads the fit pooled within Champion Groups.
+// Grouping off reads the unpooled fit; grouping on reads the fit pooled within Champion Groups.
 function pooledAvailable() { return !!(data.pooled_models && Object.keys(data.pooled_models).length); }
 function currentModel() {
   const models = state.detail === "groups" && pooledAvailable() ? data.pooled_models : data.models;
@@ -461,6 +458,8 @@ function restoreFilters() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
     for (const key of ["sheet", "perspective", "region", "metric", "detail"]) if (saved[key]) state[key] = saved[key];
+    // Older visits may have saved a view that is now part of the 2v2 lane.
+    if (state.perspective !== "blind") state.perspective = "duo";
     const savedPool = JSON.parse(localStorage.getItem(POOL_STORAGE_KEY) || "null");
     if (Array.isArray(savedPool)) state.blindPool = savedPool.map(Number);
     const savedAdcPool = JSON.parse(localStorage.getItem(ADC_POOL_STORAGE_KEY) || "null");
@@ -483,7 +482,6 @@ function idsForRole(source, role) { return role === "support" ? source.supports 
 function weightsForRole(source, role) { return role === "support" ? source.supportWeights : source.botWeights; }
 function currentPool() { return isAdcSheet() ? state.blindAdcPool : state.blindPool; }
 function setCurrentPool(pool) { if (isAdcSheet()) state.blindAdcPool = pool; else state.blindPool = pool; }
-function selectionKey() { return `${state.sheet}|${state.perspective}|${groupMode() ? "groups" : "champions"}`; }
 // [games, win rate] flipped to [column][row]; invertWinRate when the other side's team is reported.
 function transposeRaw(gamesMatrix, winRateMatrix, invertWinRate) {
   const games = gamesMatrix[0].map((unused, columnIndex) => gamesMatrix.map((row) => row[columnIndex]));
@@ -492,13 +490,10 @@ function transposeRaw(gamesMatrix, winRateMatrix, invertWinRate) {
   return { games, winRate };
 }
 
-// ---------------------------------------------------------------- champions or groups
-// A "source" is what the single-champion views read: the entity ids for each role, their pick
-// shares, the estimate tables and the raw counts. In group mode an id is a group's index.
-function groupMode() {
-  const view = currentView();
-  return state.detail === "groups" && !!(view && view.groups);
-}
+// ---------------------------------------------------------------- champion data for a view
+// Grouping on: every number comes from the fit that pools matchups within Champion Groups. Rows and
+// pickers are always single champions.
+function groupMode() { return state.detail === "groups" && pooledAvailable(); }
 // The ADC sheet's raw tables are [your ADC][column]: ADC vs ADC comes from the export; ADC vs enemy
 // support and ADC with own support are the support tables turned around.
 function withAdcRaw(raw) {
@@ -513,227 +508,152 @@ function championSource() {
   return { kind: "champions", bots: data.bots, supports: data.supports, botWeights: view.bot_weights,
     supportWeights: view.support_weights, tables: view.tables, raw: withAdcRaw(view.raw) };
 }
-function currentSource() {
-  if (!groupMode()) return championSource();
-  const groups = currentView().groups;
+function championIcon(championId, size) {
+  return `<img src="${iconPath(championId)}" alt="" width="${size}" height="${size}" loading="lazy">`;
+}
+
+// ---------------------------------------------------------------- the 2v2 lane
+// The lane's three other slots: your teammate (your ADC on the support sheet, your support on the
+// ADC sheet), the enemy ADC and the enemy support. Index -1 = not picked yet.
+function laneSlots() {
+  const teammateChoice = isAdcSheet() ? state.duoMySupport : state.duoMyBot;
+  const indexOf = (choice, ids) => (choice === "any" || choice === null ? -1 : ids.indexOf(Number(choice)));
   return {
-    kind: "groups",
-    bots: groups.bot_groups.map((group, groupIndex) => groupIndex),
-    supports: groups.support_groups.map((group, groupIndex) => groupIndex),
-    botWeights: groups.bot_weights, supportWeights: groups.support_weights, tables: groups.tables,
-    raw: withAdcRaw({ versus_games: groups.raw.versus.games, versus_win_rate: groups.raw.versus.win_rate,
-      with_games: groups.raw.with.games, with_win_rate: groups.raw.with.win_rate,
-      support_versus_games: groups.raw.support_versus.games, support_versus_win_rate: groups.raw.support_versus.win_rate,
-      bot_versus_games: groups.raw.bot_versus.games, bot_versus_win_rate: groups.raw.bot_versus.win_rate }),
-    botGroups: groups.bot_groups, supportGroups: groups.support_groups,
+    teammateIndex: indexOf(teammateChoice, isAdcSheet() ? data.supports : data.bots),
+    enemyBotIndex: indexOf(state.duoEnemyBot, data.bots),
+    enemySupportIndex: indexOf(state.duoEnemySupport, data.supports),
   };
 }
-function entityName(source, role, entityId) {
-  if (source.kind === "champions") return championName(entityId);
-  return (role === "bot" ? source.botGroups : source.supportGroups)[entityId].name;
+// The champion the Raw WR and Games columns are counted against: the enemy ADC if picked, else the
+// enemy support, else your teammate; "none" = every game of the row's champion.
+function laneFocus() {
+  const slots = laneSlots();
+  if (slots.enemyBotIndex >= 0) return { slot: "enemyBot", index: slots.enemyBotIndex, championId: data.bots[slots.enemyBotIndex] };
+  if (slots.enemySupportIndex >= 0) return { slot: "enemySupport", index: slots.enemySupportIndex, championId: data.supports[slots.enemySupportIndex] };
+  if (slots.teammateIndex >= 0) {
+    const teammateIds = isAdcSheet() ? data.supports : data.bots;
+    return { slot: "teammate", index: slots.teammateIndex, championId: teammateIds[slots.teammateIndex] };
+  }
+  return { slot: "none", index: -1, championId: null };
 }
-function entityMembers(source, role, entityId) {
-  if (source.kind === "champions") return [entityId];
-  return (role === "bot" ? source.botGroups : source.supportGroups)[entityId].champions;
-}
-// One icon for a champion; up to four member icons in a 2x2 tile for a group.
-function entityIcon(source, role, entityId, size) {
-  const members = entityMembers(source, role, entityId);
-  if (source.kind === "champions") return `<img src="${iconPath(entityId)}" alt="" width="${size}" height="${size}" loading="lazy">`;
-  const shown = members.slice(0, 4);
-  return `<span class="group-icon" style="width:${size}px;height:${size}px" aria-hidden="true">${shown.map((championId) =>
-    `<img src="${iconPath(championId)}" alt="" loading="lazy">`).join("")}</span>`;
-}
-function entityTitle(source, role, entityId) {
-  const members = entityMembers(source, role, entityId);
-  return source.kind === "champions" ? championName(entityId) : `${entityName(source, role, entityId)}: ${members.map(championName).join(", ")}`;
-}
-
-// ---------------------------------------------------------------- rows per perspective
-function rowsForSingleChampion(perspective, championId) {
-  const model = currentModel();
-  const source = currentSource();
-  const tables = source.tables;
-  const flip = perspective === "threats";
-  // Which tables each view reads. Support sheet: rows are your support (or support group); the
-  // selected opponent is an ADC (pick, threats), your own ADC (partner) or the enemy support (support).
-  // ADC sheet: rows are your ADC; the selected one is the enemy ADC (pick), your ADC (threats, rows
-  // are then enemy ADCs), your own support (partner) or the enemy support (support).
-  const tableNames = (isAdcSheet() ? {
-    pick: ["adc_pick_into", "adc_counter", "adc_expected", "bot_versus"],
-    threats: ["adc_pick_into", "adc_counter", "adc_expected", "bot_versus"],
-    partner: ["adc_synergy_pick", "adc_synergy_pure", null, "bot_with"],
-    support: ["adc_support_pick_into", "adc_support_counter", "adc_support_expected", "bot_support_versus"],
+// With exactly one champion picked, the lane is one of the model's exported tables (same linear
+// combination, exact interval), which also carry Counter only and Expected.
+function singlePickTables() {
+  const slots = laneSlots();
+  const pickedSlots = ["teammateIndex", "enemyBotIndex", "enemySupportIndex"].filter((slotName) => slots[slotName] >= 0);
+  if (pickedSlots.length !== 1) return null;
+  const tableNamesBySlot = isAdcSheet() ? {
+    enemyBotIndex: ["adc_pick_into", "adc_counter", "adc_expected"],
+    enemySupportIndex: ["adc_support_pick_into", "adc_support_counter", "adc_support_expected"],
+    teammateIndex: ["adc_synergy_pick", "adc_synergy_pure", null],
   } : {
-    pick: ["pick_into", "counter", "expected", "versus"],
-    threats: ["pick_into", "counter", "expected", "versus"],
-    partner: ["synergy_pick", "synergy_pure", null, "with"],
-    support: ["support_pick_into", "support_counter", "support_expected", "support_versus"],
-  })[perspective];
-  const [edgeTableName, counterTableName, expectedTableName, rawName] = tableNames;
-  const rowIds = idsForRole(source, rowRole());
-  const championIndex = idsForRole(source, pickerRole()).indexOf(championId);
-  const edgeTable = tables[edgeTableName];
-  const counterTable = tables[counterTableName];
-  const expectedTable = expectedTableName ? tables[expectedTableName] : null;
-  const rawGames = source.raw[`${rawName}_games`];
-  const rawWinRate = source.raw[`${rawName}_win_rate`];
-  // Site-style "delta": raw WR in this pairing minus the row champion's raw WR across all pairings.
-  const overallRawWinRate = rowIds.map((rowId, supportIndex) => {
-    let gamesTotal = 0;
-    let winsTotal = 0;
-    rawGames[supportIndex].forEach((games, botIndex) => {
-      if (games > 0 && rawWinRate[supportIndex][botIndex] !== null) {
-        gamesTotal += games;
-        winsTotal += games * rawWinRate[supportIndex][botIndex];
-      }
-    });
-    return gamesTotal > 0 ? winsTotal / gamesTotal : null;
-  });
-  return rowIds.map((rowId, supportIndex) => {
-    const sign = flip ? -1 : 1;
-    const edgeLow = flip ? -edgeTable.high[supportIndex][championIndex] : edgeTable.low[supportIndex][championIndex];
-    const edgeHigh = flip ? -edgeTable.low[supportIndex][championIndex] : edgeTable.high[supportIndex][championIndex];
-    const counterLow = flip ? -counterTable.high[supportIndex][championIndex] : counterTable.low[supportIndex][championIndex];
-    const counterHigh = flip ? -counterTable.low[supportIndex][championIndex] : counterTable.high[supportIndex][championIndex];
-    const probability = edgeTable.probability_positive[supportIndex][championIndex];
-    let expected = null;
-    if (expectedTable && model.unit === "pp") {
-      expected = 0.5 + sign * expectedTable.point[supportIndex][championIndex] / 100;
-    } else if (expectedTable) {
-      expected = sign * expectedTable.point[supportIndex][championIndex];
-    }
-    const raw = rawWinRate[supportIndex][championIndex];
-    const overall = overallRawWinRate[supportIndex];
-    const naiveDelta = raw === null || overall === null ? null : sign * 100 * (raw - overall);
-    return {
-      rowId,
-      naiveDelta,
-      edge: sign * edgeTable.point[supportIndex][championIndex],
-      edgeLow, edgeHigh,
-      probability: flip ? 1 - probability : probability,
-      counter: sign * counterTable.point[supportIndex][championIndex],
-      counterLow, counterHigh,
-      expected,
-      rawWinRate: raw === null ? null : (flip ? 1 - raw : raw),
-      games: rawGames[supportIndex][championIndex],
-    };
-  });
+    enemyBotIndex: ["pick_into", "counter", "expected"],
+    enemySupportIndex: ["support_pick_into", "support_counter", "support_expected"],
+    teammateIndex: ["synergy_pick", "synergy_pure", null],
+  };
+  const tables = currentView().tables;
+  const [edgeName, counterName, expectedName] = tableNamesBySlot[pickedSlots[0]];
+  if (!tables || !tables[edgeName]) return null;
+  return { slot: pickedSlots[0], column: slots[pickedSlots[0]], edge: tables[edgeName], counter: tables[counterName], expected: expectedName ? tables[expectedName] : null };
 }
 
-function rowsForDuo() {
+// Your options (supports, or ADCs on the ADC sheet) for this lane. Each option's total is its
+// strength plus its term with each slot: the picked champion's own term, or for a slot not picked yet
+// the average over who plays there by pick share, conditional on who is already picked beside it (an
+// unpicked enemy support is weighted by who the picked enemy ADC usually lanes with, and the reverse).
+// Totals are compared with the average option that can still be picked.
+function rowsForLane() {
   const model = currentModel();
   const view = currentView();
   const components = view.components;
   const supportCount = data.supports.length;
   const botCount = data.bots.length;
-  // Index -1 = "Not picked yet": that champion's term is averaged over its role by pick share.
-  const myBotIndex = state.duoMyBot === "any" ? -1 : data.bots.indexOf(state.duoMyBot);
-  const enemyBotIndex = state.duoEnemyBot === "any" ? -1 : data.bots.indexOf(state.duoEnemyBot);
-  const enemySupportIndex = state.duoEnemySupport === "any" ? -1 : data.supports.indexOf(Number(state.duoEnemySupport));
-  const totalOf = (values) => values.reduce((sum, value) => sum + value, 0);
-  const weights = view.support_weights.map((weight) => weight / totalOf(view.support_weights));
-  const botWeights = view.bot_weights.map((weight) => weight / totalOf(view.bot_weights));
-  // One term for the picked champion, or the pick-share average over the role when nobody is picked.
-  // The average's variance treats the averaged cells as independent, like the rest of this interval.
-  const termFor = (family, rowStart, pickedIndex, averagingWeights) => {
-    if (pickedIndex >= 0) return { point: family.point[rowStart + pickedIndex], variance: family.sd[rowStart + pickedIndex] ** 2 };
+  const isAdc = isAdcSheet();
+  const { teammateIndex, enemyBotIndex, enemySupportIndex } = laneSlots();
+  const normalize = (values) => {
+    const total = values.reduce((sum, value) => sum + value, 0);
+    return total > 0 ? values.map((value) => value / total) : values.map(() => 1 / values.length);
+  };
+  const supportWeights = normalize(view.support_weights);
+  const botWeights = normalize(view.bot_weights);
+  const sameTeamGames = view.raw.with_games;   // [support][bot]: games with that support and bot on one team
+  const enemySupportWeights = enemyBotIndex >= 0 ? normalize(sameTeamGames.map((supportRow) => supportRow[enemyBotIndex])) : supportWeights;
+  const enemyBotWeights = enemySupportIndex >= 0 ? normalize(sameTeamGames[enemySupportIndex]) : botWeights;
+  // One term for the picked champion (by its component position), or the weighted average over the slot.
+  // The average's variance treats the averaged cells as independent (approximate intervals).
+  const termFor = (family, positionOf, pickedIndex, averagingWeights, sign = 1) => {
+    if (pickedIndex >= 0) return { point: sign * family.point[positionOf(pickedIndex)], variance: family.sd[positionOf(pickedIndex)] ** 2 };
     let point = 0;
     let variance = 0;
     averagingWeights.forEach((weight, otherIndex) => {
-      point += weight * family.point[rowStart + otherIndex];
-      variance += (weight * family.sd[rowStart + otherIndex]) ** 2;
+      point += weight * sign * family.point[positionOf(otherIndex)];
+      variance += (weight * family.sd[positionOf(otherIndex)]) ** 2;
     });
     return { point, variance };
   };
-  const rawTotals = data.supports.map((supportId, supportIndex) => {
-    const terms = [
-      termFor(components.support_strength, supportIndex, 0, null),
-      termFor(components.synergy, supportIndex * botCount, myBotIndex, botWeights),
-      termFor(components.versus, supportIndex * botCount, enemyBotIndex, botWeights),
-      termFor(components.support_vs_support, supportIndex * supportCount, enemySupportIndex, weights),
+  const rowIds = isAdc ? data.bots : data.supports;
+  const rawTotals = rowIds.map((rowId, rowIndex) => {
+    const terms = isAdc ? [
+      termFor(components.bot_strength, () => rowIndex, 0, null),
+      termFor(components.synergy, (supportIndex) => supportIndex * botCount + rowIndex, teammateIndex, supportWeights),
+      termFor(components.bot_vs_bot, (otherBotIndex) => rowIndex * botCount + otherBotIndex, enemyBotIndex, enemyBotWeights),
+      termFor(components.versus, (supportIndex) => supportIndex * botCount + rowIndex, enemySupportIndex, enemySupportWeights, -1),
+    ] : [
+      termFor(components.support_strength, () => rowIndex, 0, null),
+      termFor(components.synergy, (botIndex) => rowIndex * botCount + botIndex, teammateIndex, botWeights),
+      termFor(components.versus, (botIndex) => rowIndex * botCount + botIndex, enemyBotIndex, enemyBotWeights),
+      termFor(components.support_vs_support, (otherSupportIndex) => rowIndex * supportCount + otherSupportIndex, enemySupportIndex, enemySupportWeights),
     ];
-    return { point: totalOf(terms.map((term) => term.point)), variance: totalOf(terms.map((term) => term.variance)) };
+    return { point: terms.reduce((sum, term) => sum + term.point, 0), variance: terms.reduce((sum, term) => sum + term.variance, 0) };
   });
-  const average = averageOverPickable(rawTotals, weights, data.supports, duoPickedIds());
-  // Plain games and win rate summed over a whole row (an unpicked enemy ADC = any ADC).
-  const rowTotal = (gamesRow, winRateRow) => {
+  const average = averageOverPickable(rawTotals, isAdc ? botWeights : supportWeights, rowIds, duoPickedIds());
+  const isWin = model.unit === "pp";
+  const z = 1.6449;
+  const convert = (value) => (isWin ? 100 * (logistic(value) - 0.5) : value);
+  const singleTables = singlePickTables();
+  // Raw games and win rate against the focus champion (or across every game when nothing is picked).
+  const raw = withAdcRaw(view.raw);
+  const focus = laneFocus();
+  const rawName = {
+    enemyBot: isAdc ? "bot_versus" : "versus",
+    enemySupport: isAdc ? "bot_support_versus" : "support_versus",
+    teammate: isAdc ? "bot_with" : "with",
+    none: isAdc ? "bot_versus" : "versus",
+  }[focus.slot];
+  const rawGames = raw[`${rawName}_games`];
+  const rawWinRate = raw[`${rawName}_win_rate`];
+  const rawFor = (rowIndex) => {
+    if (focus.index >= 0) return { games: rawGames[rowIndex][focus.index], winRate: rawWinRate[rowIndex][focus.index] };
     let games = 0;
     let wins = 0;
-    gamesRow.forEach((rowGames, columnIndex) => {
-      if (rowGames > 0 && winRateRow[columnIndex] !== null) { games += rowGames; wins += rowGames * winRateRow[columnIndex]; }
+    rawGames[rowIndex].forEach((cellGames, columnIndex) => {
+      if (cellGames > 0 && rawWinRate[rowIndex][columnIndex] !== null) { games += cellGames; wins += cellGames * rawWinRate[rowIndex][columnIndex]; }
     });
     return { games, winRate: games > 0 ? wins / games : null };
   };
-  // Raw count of games with this exact lane: every champion that is picked must match.
-  const exactGamesBySupport = new Array(supportCount).fill(0);
-  const laneRows = (data.exact_lane_games || {})[state.region] || [];
-  for (let offset = 0; offset < laneRows.length; offset += 5) {
-    const [laneMyBot, laneMySupport, laneEnemyBot, laneEnemySupport, laneGames] = laneRows.slice(offset, offset + 5);
-    if ((myBotIndex >= 0 && laneMyBot !== myBotIndex) || (enemyBotIndex >= 0 && laneEnemyBot !== enemyBotIndex)) continue;
-    if (enemySupportIndex >= 0 && laneEnemySupport !== enemySupportIndex) continue;
-    exactGamesBySupport[laneMySupport] += laneGames;
-  }
-  // Champ Groups: games of the same lane at group level (any member of each of the four groups).
-  // These are the games the pooled fit borrows from; the exact lane above is usually far fewer.
-  let groupGamesBySupport = null;
-  let groupRawBySupport = null;
-  if (groupMode()) {
-    const groups = view.groups;
-    const groupIndexByChampion = (groupList) => {
-      const groupOf = new Map();
-      groupList.forEach((group, groupIndex) => group.champions.forEach((championId) => groupOf.set(championId, groupIndex)));
-      return groupOf;
-    };
-    const botGroupOf = groupIndexByChampion(groups.bot_groups);
-    const supportGroupOf = groupIndexByChampion(groups.support_groups);
-    const groupOfBotIndex = (botIndex) => botGroupOf.get(data.bots[botIndex]);
-    const groupOfSupportIndex = (supportIndex) => supportGroupOf.get(data.supports[supportIndex]);
-    const myBotGroup = groupOfBotIndex(myBotIndex);
-    const enemyBotGroup = groupOfBotIndex(enemyBotIndex);
-    const enemySupportGroup = enemySupportIndex >= 0 ? groupOfSupportIndex(enemySupportIndex) : null;
-    const gamesBySupportGroup = new Map();
-    for (let offset = 0; offset < laneRows.length; offset += 5) {
-      const [laneMyBot, laneMySupport, laneEnemyBot, laneEnemySupport, laneGames] = laneRows.slice(offset, offset + 5);
-      if ((myBotIndex >= 0 && groupOfBotIndex(laneMyBot) !== myBotGroup) || (enemyBotIndex >= 0 && groupOfBotIndex(laneEnemyBot) !== enemyBotGroup)) continue;
-      if (enemySupportIndex >= 0 && groupOfSupportIndex(laneEnemySupport) !== enemySupportGroup) continue;
-      const supportGroup = groupOfSupportIndex(laneMySupport);
-      gamesBySupportGroup.set(supportGroup, (gamesBySupportGroup.get(supportGroup) || 0) + laneGames);
-    }
-    groupGamesBySupport = data.supports.map((supportId, supportIndex) => {
-      const supportGroup = groupOfSupportIndex(supportIndex);
-      return supportGroup === undefined ? null : (gamesBySupportGroup.get(supportGroup) || 0);
-    });
-    // "Games vs" / "Raw WR vs" at group level too: this support's group against the enemy ADC's group.
-    groupRawBySupport = data.supports.map((supportId, supportIndex) => {
-      const supportGroup = groupOfSupportIndex(supportIndex);
-      if (supportGroup === undefined) return null;
-      if (enemyBotIndex < 0) return rowTotal(groups.raw.versus.games[supportGroup], groups.raw.versus.win_rate[supportGroup]);
-      if (enemyBotGroup === undefined) return null;
-      return { games: groups.raw.versus.games[supportGroup][enemyBotGroup], winRate: groups.raw.versus.win_rate[supportGroup][enemyBotGroup] };
-    });
-  }
-  const isWin = model.unit === "pp";
-  const z = 1.6449;
-  return data.supports.map((supportId, supportIndex) => {
-    const centered = rawTotals[supportIndex].point - average;
-    const sd = Math.sqrt(rawTotals[supportIndex].variance);
-    const convert = (value) => (isWin ? 100 * (logistic(value) - 0.5) : value);
-    const normalCdf = (x) => 0.5 * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * x ** 3)));
-    const championRaw = enemyBotIndex >= 0
-      ? { games: view.raw.versus_games[supportIndex][enemyBotIndex], winRate: view.raw.versus_win_rate[supportIndex][enemyBotIndex] }
-      : rowTotal(view.raw.versus_games[supportIndex], view.raw.versus_win_rate[supportIndex]);
-    return {
-      rowId: supportId,
+  return rowIds.map((rowId, rowIndex) => {
+    const centered = rawTotals[rowIndex].point - average;
+    const sd = Math.sqrt(rawTotals[rowIndex].variance);
+    const rowRaw = rawFor(rowIndex);
+    const row = {
+      rowId,
       edge: convert(centered), edgeLow: convert(centered - z * sd), edgeHigh: convert(centered + z * sd),
-      probability: sd > 0 ? normalCdf(centered / sd) : 0.5,
-      counter: null, counterLow: null, counterHigh: null,
-      expected: null,
-      // In Champ Groups detail the same columns count at group level (each champion stands for its group).
-      rawWinRate: groupRawBySupport && groupRawBySupport[supportIndex] ? groupRawBySupport[supportIndex].winRate : championRaw.winRate,
-      games: groupRawBySupport && groupRawBySupport[supportIndex] ? groupRawBySupport[supportIndex].games : championRaw.games,
-      exactGames: groupGamesBySupport && groupGamesBySupport[supportIndex] !== null ? groupGamesBySupport[supportIndex] : exactGamesBySupport[supportIndex],
+      counter: null, counterLow: null, counterHigh: null, expected: null,
+      rawWinRate: rowRaw.winRate, games: rowRaw.games,
     };
+    if (singleTables) {
+      const cell = (table, field) => table[field][rowIndex][singleTables.column];
+      Object.assign(row, {
+        edge: cell(singleTables.edge, "point"), edgeLow: cell(singleTables.edge, "low"), edgeHigh: cell(singleTables.edge, "high"),
+        counter: cell(singleTables.counter, "point"), counterLow: cell(singleTables.counter, "low"), counterHigh: cell(singleTables.counter, "high"),
+        modelEdge: convert(centered),
+      });
+      if (singleTables.expected) {
+        const expectedPoint = cell(singleTables.expected, "point");
+        row.expected = isWin ? 0.5 + expectedPoint / 100 : expectedPoint;
+      }
+    }
+    return row;
   });
 }
 
@@ -752,105 +672,6 @@ function averageOverPickable(rawTotals, weights, rowIds, pickedIds) {
     weightTotal += weights[rowIndex];
   });
   return weightedSum / weightTotal;
-}
-
-// ADC sheet 2v2: your ADC options given your support, the enemy ADC and the enemy support. Each
-// option's total is ADC strength + synergy with your support + ADC vs enemy ADC - the enemy
-// support's matchup into this ADC; anything not picked yet is averaged over its role by pick share.
-function rowsForAdcDuo() {
-  const model = currentModel();
-  const view = currentView();
-  const components = view.components;
-  const supportCount = data.supports.length;
-  const botCount = data.bots.length;
-  const mySupportIndex = state.duoMySupport === "any" ? -1 : data.supports.indexOf(Number(state.duoMySupport));
-  const enemyBotIndex = state.duoEnemyBot === "any" ? -1 : data.bots.indexOf(state.duoEnemyBot);
-  const enemySupportIndex = state.duoEnemySupport === "any" ? -1 : data.supports.indexOf(Number(state.duoEnemySupport));
-  const totalOf = (values) => values.reduce((sum, value) => sum + value, 0);
-  const supportWeights = view.support_weights.map((weight) => weight / totalOf(view.support_weights));
-  const botWeights = view.bot_weights.map((weight) => weight / totalOf(view.bot_weights));
-  // One term for the picked champion (by its component position), or the pick-share average.
-  const termFor = (family, positionOf, pickedIndex, averagingWeights, sign = 1) => {
-    if (pickedIndex >= 0) return { point: sign * family.point[positionOf(pickedIndex)], variance: family.sd[positionOf(pickedIndex)] ** 2 };
-    let point = 0;
-    let variance = 0;
-    averagingWeights.forEach((weight, otherIndex) => {
-      point += weight * sign * family.point[positionOf(otherIndex)];
-      variance += (weight * family.sd[positionOf(otherIndex)]) ** 2;
-    });
-    return { point, variance };
-  };
-  const rawTotals = data.bots.map((botId, botIndex) => {
-    const terms = [
-      termFor(components.bot_strength, () => botIndex, 0, null),
-      termFor(components.synergy, (supportIndex) => supportIndex * botCount + botIndex, mySupportIndex, supportWeights),
-      termFor(components.bot_vs_bot, (otherBotIndex) => botIndex * botCount + otherBotIndex, enemyBotIndex, botWeights),
-      termFor(components.versus, (supportIndex) => supportIndex * botCount + botIndex, enemySupportIndex, supportWeights, -1),
-    ];
-    return { point: totalOf(terms.map((term) => term.point)), variance: totalOf(terms.map((term) => term.variance)) };
-  });
-  const average = averageOverPickable(rawTotals, botWeights, data.bots, duoPickedIds());
-  const rowTotal = (gamesRow, winRateRow) => {
-    let games = 0;
-    let wins = 0;
-    gamesRow.forEach((rowGames, columnIndex) => {
-      if (rowGames > 0 && winRateRow[columnIndex] !== null) { games += rowGames; wins += rowGames * winRateRow[columnIndex]; }
-    });
-    return { games, winRate: games > 0 ? wins / games : null };
-  };
-  // Exact-lane counts, at champion level or (Champ Groups) at group level for every picked slot.
-  const laneRows = (data.exact_lane_games || {})[state.region] || [];
-  const groups = groupMode() ? view.groups : null;
-  const groupIndexByChampion = (groupList) => {
-    const groupOf = new Map();
-    groupList.forEach((group, groupIndex) => group.champions.forEach((championId) => groupOf.set(championId, groupIndex)));
-    return groupOf;
-  };
-  const botGroupOf = groups ? groupIndexByChampion(groups.bot_groups) : null;
-  const supportGroupOf = groups ? groupIndexByChampion(groups.support_groups) : null;
-  const sameBot = (first, second) => (groups ? botGroupOf.get(data.bots[first]) === botGroupOf.get(data.bots[second]) : first === second);
-  const sameSupport = (first, second) => (groups ? supportGroupOf.get(data.supports[first]) === supportGroupOf.get(data.supports[second]) : first === second);
-  const exactGamesByBotKey = new Map();
-  const botKey = (botIndex) => (groups ? botGroupOf.get(data.bots[botIndex]) : botIndex);
-  for (let offset = 0; offset < laneRows.length; offset += 5) {
-    const [laneMyBot, laneMySupport, laneEnemyBot, laneEnemySupport, laneGames] = laneRows.slice(offset, offset + 5);
-    if (mySupportIndex >= 0 && !sameSupport(laneMySupport, mySupportIndex)) continue;
-    if (enemyBotIndex >= 0 && !sameBot(laneEnemyBot, enemyBotIndex)) continue;
-    if (enemySupportIndex >= 0 && !sameSupport(laneEnemySupport, enemySupportIndex)) continue;
-    exactGamesByBotKey.set(botKey(laneMyBot), (exactGamesByBotKey.get(botKey(laneMyBot)) || 0) + laneGames);
-  }
-  const isWin = model.unit === "pp";
-  const z = 1.6449;
-  const convert = (value) => (isWin ? 100 * (logistic(value) - 0.5) : value);
-  const normalCdf = (x) => 0.5 * (1 + Math.tanh(Math.sqrt(2 / Math.PI) * (x + 0.044715 * x ** 3)));
-  return data.bots.map((botId, botIndex) => {
-    const centered = rawTotals[botIndex].point - average;
-    const sd = Math.sqrt(rawTotals[botIndex].variance);
-    // Games and raw WR against the enemy ADC (any enemy ADC when none is picked); group level in Champ Groups.
-    let versusRaw;
-    if (groups) {
-      const myGroup = botGroupOf.get(botId);
-      const enemyGroup = enemyBotIndex >= 0 ? botGroupOf.get(data.bots[enemyBotIndex]) : undefined;
-      versusRaw = myGroup === undefined ? { games: 0, winRate: null }
-        : enemyBotIndex < 0 ? rowTotal(groups.raw.bot_versus.games[myGroup], groups.raw.bot_versus.win_rate[myGroup])
-          : enemyGroup === undefined ? { games: 0, winRate: null }
-            : { games: groups.raw.bot_versus.games[myGroup][enemyGroup], winRate: groups.raw.bot_versus.win_rate[myGroup][enemyGroup] };
-    } else {
-      versusRaw = enemyBotIndex >= 0
-        ? { games: view.raw.bot_versus_games[botIndex][enemyBotIndex], winRate: view.raw.bot_versus_win_rate[botIndex][enemyBotIndex] }
-        : rowTotal(view.raw.bot_versus_games[botIndex], view.raw.bot_versus_win_rate[botIndex]);
-    }
-    return {
-      rowId: botId,
-      edge: convert(centered), edgeLow: convert(centered - z * sd), edgeHigh: convert(centered + z * sd),
-      probability: sd > 0 ? normalCdf(centered / sd) : 0.5,
-      counter: null, counterLow: null, counterHigh: null,
-      expected: null,
-      rawWinRate: versusRaw.winRate,
-      games: versusRaw.games,
-      exactGames: exactGamesByBotKey.get(botKey(botIndex)) || 0,
-    };
-  });
 }
 
 // ---------------------------------------------------------------- blind & ban
@@ -1060,10 +881,9 @@ function renderStatus() {
   const fitGameCount = model?.game_count ?? data.total_games;
   // [chip text, hover explanation]
   const statusChips = [
-    [`${regionLabel} · Diamond+${groupMode() ? " · Champ Groups" : ""}`, ""],
     view ? [`Estimates for patch ${patchName}`, `Every edge is adjusted to patch ${patchName}. Earlier patches still count; the model learns how much each matchup shifted between patches.`] : null,
-    [`Fit on ${formatInteger(fitGameCount)} games`, "All regions, Diamond+ and Emerald, every patch kept. Effects are shared across all of them, with region, elo and patch corrections estimated on top, so these games all sharpen the numbers you see here."],
-    view ? [`${formatInteger(view.game_count)} ${regionLabel} Diamond+ games`, `The games that match your region and elo, all patches together. They feed the Raw WR and Games columns and the pick shares (how often each champion is played here); the estimates themselves use every game the model is fit on.`] : null,
+    [`Fit on ${formatInteger(fitGameCount)} games${view ? `, ${formatInteger(view.game_count)} ${regionLabel} Diamond+ games` : ""}`,
+      `The model is fit on all ${formatInteger(fitGameCount)}: every region, Diamond+ and Emerald, the newest games first (at most 800,000), with region, elo and patch corrections estimated on top, so they all sharpen the numbers you see. The ${regionLabel} Diamond+ games are the ones matching your filters: they feed the Raw WR and Games columns and the pick rates.${groupMode() ? " Grouping similar champions is on." : ""}`],
     [`Updated ${data.generated_at}`, ""],
   ].filter(Boolean);
   elements.statusLine.innerHTML = statusChips
@@ -1077,14 +897,8 @@ function renderStatus() {
   if (goldInput.disabled && state.metric === "lane_gold_at_14") state.metric = "win";
 }
 
-// The role the picker selects: the enemy support in "Pick into support", and on the ADC sheet also
-// your own support in "Partner for my support"; otherwise an ADC.
-function pickerRole() {
-  if (state.perspective === "support") return "support";
-  return isAdcSheet() && state.perspective === "partner" ? "support" : "bot";
-}
-
-function pickerChampions(source = currentSource(), role = pickerRole()) {
+// Champions of a role, most picked first.
+function pickerChampions(source, role) {
   const ids = idsForRole(source, role);
   const weights = weightsForRole(source, role);
   const order = ids.map((botId, botIndex) => ({ botId, weight: weights[botIndex] }));
@@ -1092,39 +906,14 @@ function pickerChampions(source = currentSource(), role = pickerRole()) {
   return order;
 }
 
-function selectedChampion() {
-  const key = selectionKey();
-  const available = idsForRole(currentSource(), pickerRole());
-  if (state.championByPerspective[key] === undefined || !available.includes(state.championByPerspective[key])) {
-    state.championByPerspective[key] = pickerChampions()[0].botId;
-  }
-  return state.championByPerspective[key];
-}
-
+// The 2v2 lane uses the three dropdowns; Blind & ban uses the champion grid for your pool.
 function renderPicker() {
   const isDuo = state.perspective === "duo";
-  const isBlind = state.perspective === "blind";
   elements.singlePicker.hidden = isDuo;
   elements.duoPickers.hidden = !isDuo;
-  elements.blindOptions.hidden = !isBlind;
-  if (isDuo) { renderDuoPickers(); return; }
-  if (isBlind) { renderPoolPicker(); return; }
-  const source = currentSource();
-  const isGroups = source.kind === "groups";
-  const role = pickerRole();
-  const isEnemy = state.perspective === "pick" || state.perspective === "support";
-  elements.pickerLabel.textContent = `${isEnemy ? "Enemy" : "Your"} ${roleWord(role)}${isGroups ? " group" : ""}`;
-  const selected = selectedChampion();
-  const query = state.search.trim().toLowerCase();
-  // In group mode the search also matches a group's member champions.
-  const matches = (botId) => !query || entityTitle(source, role, botId).toLowerCase().includes(query);
-  const champions = pickerChampions(source, role).filter(({ botId }) => matches(botId));
-  elements.pickerCount.textContent = `${champions.length} shown`;
-  elements.grid.innerHTML = champions.map(({ botId, weight }) => `
-    <button type="button" class="champion-button" data-champion="${botId}" aria-pressed="${botId === selected}" title="${escapeHtml(entityTitle(source, role, botId))} · ${(weight * 100).toFixed(1)}% of ${role === "support" ? "support" : "bot-lane"} picks">
-      ${entityIcon(source, role, botId, 44)}
-      <span>${escapeHtml(entityName(source, role, botId))}</span>
-    </button>`).join("");
+  elements.blindOptions.hidden = isDuo;
+  if (isDuo) renderDuoPickers();
+  else renderPoolPicker();
 }
 
 // Blind & ban: the grid toggles champions in and out of your pool (supports, or ADCs on the ADC sheet).
@@ -1139,7 +928,7 @@ function renderPoolPicker() {
   elements.pickerCount.textContent = `${pool.filter((championId) => idsForRole(source, poolRole).includes(championId)).length} in pool`;
   elements.grid.innerHTML = champions.map(({ botId, weight }) => `
     <button type="button" class="champion-button" data-champion="${botId}" aria-pressed="${pool.includes(botId)}" title="${escapeHtml(championName(botId))} · ${(weight * 100).toFixed(1)}% of ${poolRole === "support" ? "support" : "bot-lane"} picks · click to ${pool.includes(botId) ? "remove from" : "add to"} your pool">
-      ${entityIcon(source, poolRole, botId, 44)}
+      ${championIcon(botId, 44)}
       <span>${escapeHtml(championName(botId))}</span>
     </button>`).join("");
   // Your partner: an ADC on the support sheet, a support on the ADC sheet.
@@ -1150,9 +939,8 @@ function renderPoolPicker() {
 }
 
 function renderDuoPickers() {
-  const mostPickedBots = pickerChampions(championSource(), "bot").map(({ botId }) => botId);
-  if (state.duoMyBot === null) state.duoMyBot = mostPickedBots[0];
-  if (state.duoEnemyBot === null) state.duoEnemyBot = mostPickedBots[1 % mostPickedBots.length];
+  // Opens on the most-picked enemy ADC with everything else not picked yet.
+  if (state.duoEnemyBot === null) state.duoEnemyBot = pickerChampions(championSource(), "bot")[0].botId;
   const notPickedOption = (selectedValue) => `<option value="any" ${selectedValue === "any" ? "selected" : ""}>Not picked yet</option>`;
   // The first box is your teammate: your ADC on the support sheet, your support on the ADC sheet.
   elements.duoMyLabel.textContent = isAdcSheet() ? "Your support" : "Your ADC";
@@ -1208,105 +996,55 @@ function axisSvg(limit, decimals) {
   }).join("")}</svg>`;
 }
 
-function headerTitle(perspective, championId) {
-  const source = currentSource();
-  const name = escapeHtml(entityName(source, pickerRole(), championId));
-  if (isAdcSheet()) {
-    const isGroups = source.kind === "groups";
-    const target = isGroups ? `one of ${escapeHtml(entityMembers(source, pickerRole(), championId).map(championName).join(", "))}` : name;
-    const rowsWord = isGroups ? "ADC groups" : "ADCs";
-    const groupNote = isGroups ? " Each row is one of your ADC groups; its numbers are the pick-weighted average of its members." : "";
-    if (perspective === "support") return { title: `${rowsWord} into ${name}`, meta: `Your ADC pick when the enemy support is ${target}, against the ADCs they usually lane with.${groupNote}` };
-    if (perspective === "pick") return { title: `${rowsWord} into ${name}`, meta: `Your ADC pick when the enemy ADC is ${target}, with the supports it usually lanes with.${groupNote}` };
-    if (perspective === "threats") return { title: `${rowsWord} that threaten ${name}`, meta: `Enemy ADCs ranked by how much they hurt you on ${target}. The most dangerous come first.${groupNote}` };
-    return { title: `Best ADCs for ${name}`, meta: `ADCs on your team, ranked by how much they add when your support is ${target}.${groupNote}` };
-  }
-  if (source.kind === "groups") {
-    const members = escapeHtml(entityMembers(source, pickerRole(), championId).map(championName).join(", "));
-    const groupNote = `Each row is one of your support groups; its numbers are the pick-weighted average of its members.`;
-    if (perspective === "support") return { title: `Support groups into ${name}`, meta: `Your support pick when the enemy support is one of ${members}, against the ADCs they usually lane with. ${groupNote}` };
-    if (perspective === "pick") return { title: `Support groups into ${name}`, meta: `Your support pick when the enemy bot laner is one of ${members}. ${groupNote}` };
-    if (perspective === "threats") return { title: `Support groups that threaten ${name}`, meta: `Enemy support groups ranked by how much they hurt you on ${members}. ${groupNote}` };
-    return { title: `Best partner groups for ${name}`, meta: `Support groups on your team, ranked by how much they add with ${members}. ${groupNote}` };
-  }
-  if (perspective === "support") return { title: `Supports into ${name}`, meta: `Your support pick when the enemy support is ${name}, against the ADCs ${name} usually lanes with.` };
-  if (perspective === "pick") return { title: `Supports into ${name}`, meta: `Your support pick when the enemy bot laner is ${name}.` };
-  if (perspective === "threats") return { title: `Supports that threaten ${name}`, meta: `Enemy supports ranked by how much they hurt you on ${name}. The most dangerous come first.` };
-  return { title: `Best partners for ${name}`, meta: `Supports on your team, ranked by how much they add when you play ${name}.` };
-}
-
 function renderSheet() {
   const model = currentModel();
   const view = currentView();
   if (!view) { elements.sheet.innerHTML = `<p class="loading">No data for this region and elo yet.</p>`; return; }
   if (state.perspective === "blind") { renderBlindSheet(); return; }
-  const perspective = state.perspective;
-  const isDuo = perspective === "duo";
-  const championId = isDuo ? state.duoEnemyBot : selectedChampion();
-  // A champion already in the lane can't be picked again: drop it as a row (e.g. Thresh in
-  // "Supports into Thresh", or Swain as a support into a Swain bot). Group rows stay, since a group
-  // can still be picked through its other members.
-  const unpickableIds = isDuo ? duoPickedIds() : groupMode() ? [] : [championId];
-  const rows = (isDuo ? (isAdcSheet() ? rowsForAdcDuo() : rowsForDuo()) : rowsForSingleChampion(perspective, championId))
-    .filter((row) => !unpickableIds.includes(row.rowId));
+  // A champion already in the lane can't be picked again, so it isn't a row (e.g. Swain as a support into a Swain bot).
+  const rows = rowsForLane().filter((row) => !duoPickedIds().includes(row.rowId));
   const rowsRole = rowRole();
   const rowsWord = roleWord(rowsRole);
-  const rowSource = isDuo ? championSource() : currentSource();
   const decimals = model.decimals;
   const units = unitLabel(model);
-  const sortDirection = perspective === "threats" ? 1 : -1;
+  const singleTables = singlePickTables();
+  const focus = laneFocus();
   const sorters = {
-    edge: (first, second) => sortDirection * (first.edge - second.edge),
-    counter: (first, second) => sortDirection * ((first.counter ?? 0) - (second.counter ?? 0)),
+    edge: (first, second) => second.edge - first.edge,
+    counter: (first, second) => (second.counter ?? 0) - (first.counter ?? 0),
     games: (first, second) => second.games - first.games,
   };
   rows.sort(sorters[state.sortKey] || sorters.edge);
   const limit = niceLimit(Math.max(...rows.map((row) => Math.max(Math.abs(row.edgeLow), Math.abs(row.edgeHigh)))) || 1);
-  const counterLimit = niceLimit(Math.max(...rows.filter((row) => row.counter !== null).map((row) => Math.max(Math.abs(row.counterLow), Math.abs(row.counterHigh))), 0.5));
 
-  let headHtml;
-  if (isDuo) {
-    const mine = escapeHtml(duoBotLabel(state.duoMyBot));
-    const enemy = escapeHtml(duoBotLabel(state.duoEnemyBot));
-    const enemySupport = state.duoEnemySupport === "any" ? "a typical support" : escapeHtml(championName(Number(state.duoEnemySupport)));
-    const myTeammate = isAdcSheet() ? state.duoMySupport : state.duoMyBot;
-    const unpickedNote = [myTeammate, state.duoEnemyBot, state.duoEnemySupport].includes("any")
-      ? " Anything not picked yet is averaged over that role by how often each champion is played." : "";
-    const laneWord = myTeammate === "any" || state.duoEnemyBot === "any" ? "lane" : "exact 2v2";
-    const groupBorrowNote = groupMode() ? " Each matchup borrows strength from your Champion Groups as far as the data says the groups play alike." : "";
-    if (isAdcSheet()) {
-      const mySupportName = state.duoMySupport === "any" ? "a typical support" : escapeHtml(championName(Number(state.duoMySupport)));
-      headHtml = `<div class="sheet-head">${state.duoEnemyBot === "any" ? "" : `<img src="${iconPath(state.duoEnemyBot)}" alt="">`}<div><h2>? + ${mySupportName} vs ${enemy} + ${enemySupport}</h2>
-      <p class="sheet-meta">Your ADC options for this ${laneWord}, combining ADC strength, synergy with ${mySupportName}, the matchup into ${enemy}${state.duoEnemySupport === "any" ? "" : ` and how ${enemySupport} plays into each ADC`}.${unpickedNote}${groupBorrowNote} Intervals here are approximate (they ignore correlations between terms).</p>`;
-    } else {
-      headHtml = `<div class="sheet-head">${state.duoEnemyBot === "any" ? "" : `<img src="${iconPath(state.duoEnemyBot)}" alt="">`}<div><h2>${mine} + ? vs ${enemy} + ${enemySupport}</h2>
-      <p class="sheet-meta">Your support options for this ${laneWord}, combining support strength, synergy with ${mine}, the matchup into ${enemy}${state.duoEnemySupport === "any" ? "" : ` and the support-vs-support matchup`}.${unpickedNote}${groupBorrowNote} Intervals here are approximate (they ignore correlations between terms).</p>`;
-    }
-    headHtml += `
-      ${!groupMode() && pooledAvailable() ? `<p class="duo-warning" role="note">Champ detail: each matchup here uses only that exact champion pair's games, so rare pairs are mostly guesswork. Switch Detail to <strong>Champ Groups</strong> for numbers that borrow strength from similar champions.</p>` : ""}</div></div>`;
-  } else {
-    const titles = headerTitle(perspective, championId);
-    const source = currentSource();
-    const role = pickerRole();
-    const pickedIndex = idsForRole(source, role).indexOf(championId);
-    // Support sheet: games of any listed support facing the selected champion. ADC sheet: the rows' own games.
-    const facedGames = isAdcSheet()
-      ? rows.reduce((sum, row) => sum + row.games, 0)
-      : (role === "support" ? source.raw.support_versus_games : source.raw.versus_games).reduce((sum, row) => sum + row[pickedIndex], 0);
-    const pairingWord = isAdcSheet() && perspective === "partner" ? "with" : "vs";
-    const pickShare = weightsForRole(source, role)[pickedIndex];
-    headHtml = `<div class="sheet-head">${entityIcon(source, role, championId, 56)}<div><h2>${titles.title}</h2><p class="sheet-meta">${titles.meta}</p></div></div>
-      <div class="sheet-summary"><span><strong>${formatInteger(facedGames)}</strong> ${rowsWord}-${pairingWord}-${escapeHtml(entityName(source, role, championId))} games in this view</span><span><strong>${(pickShare * 100).toFixed(1)}%</strong> of ${role === "support" ? "support" : "bot-lane"} picks</span></div>`;
-  }
+  // Title: your side vs theirs, "?" for your own pick and "any" for slots not picked yet.
+  const teammateChoice = isAdcSheet() ? state.duoMySupport : state.duoMyBot;
+  const teammateWord = isAdcSheet() ? "support" : "ADC";
+  const slotName = (choice, word) => (choice === "any" ? `any ${word}` : escapeHtml(championName(Number(choice))));
+  const teammateName = slotName(teammateChoice, teammateWord);
+  const enemyBotName = slotName(state.duoEnemyBot, "ADC");
+  const enemySupportName = slotName(state.duoEnemySupport, "support");
+  const ownSide = isAdcSheet() ? `? + ${teammateName}` : `${teammateName} + ?`;
+  const anyUnpicked = [teammateChoice, state.duoEnemyBot, state.duoEnemySupport].includes("any");
+  const unpickedNote = anyUnpicked
+    ? " A slot not picked yet is averaged over who plays there by pick rate; an unpicked enemy support counts the supports the picked enemy ADC usually lanes with, and the other way round." : "";
+  const intervalNote = singleTables ? "" : " With more than one champion picked, intervals are approximate (they ignore correlations between terms).";
+  const partsText = isAdcSheet()
+    ? `ADC strength, synergy with ${teammateName}, the matchup into ${enemyBotName} and how ${enemySupportName} plays into each ADC`
+    : `support strength, synergy with ${teammateName}, the matchup into ${enemyBotName} and the matchup into ${enemySupportName}`;
+  const groupNote = groupMode() ? " Grouping is on: each matchup also learns from similar champions, as far as the data says they play alike." : "";
+  const headHtml = `<div class="sheet-head">${focus.championId === null ? "" : `<img src="${iconPath(focus.championId)}" alt="">`}<div><h2>${ownSide} vs ${enemyBotName} + ${enemySupportName}</h2>
+      <p class="sheet-meta">Your ${rowsWord} options for this lane, adding up ${partsText}.${unpickedNote}${intervalNote}${groupNote}</p>
+      ${!groupMode() && pooledAvailable() ? `<p class="duo-warning" role="note">Rare pairings have few games of their own, so their numbers lean on each champion's overall strength. Turn on <strong>grouping similar champions</strong> above for more statistical power.</p>` : ""}</div></div>`;
   // Header labels are split onto two lines (first line, second line) to keep the columns narrow.
-  const edgeHeaderLines = isDuo ? ["Edge in", "this 2v2"] : perspective === "threats" ? ["Your edge vs", `this ${rowsWord}`] : perspective === "partner" ? ["Edge with", "this partner"] : ["Edge vs", "typical pick"];
+  const edgeHeaderLines = ["Edge vs", "average option"];
   const edgeHeader = edgeHeaderLines.join(" ");
-  const counterHeaderLines = perspective === "partner" ? ["Synergy", "only"] : ["Counter", "only"];
-  const expectedHeaderLines = model.unit === "pp" ? (perspective === "threats" ? ["Your", "exp. WR"] : ["Exp.", "WR"]) : ["Exp.", model.label.replace("Lane ", "")];
-  const enemyBotName = escapeHtml(duoBotLabel(state.duoEnemyBot));
+  const counterHeaderLines = singleTables && singleTables.slot === "teammateIndex" ? ["Synergy", "only"] : ["Counter", "only"];
+  const expectedHeaderLines = model.unit === "pp" ? ["Exp.", "WR"] : ["Exp.", model.label.replace("Lane ", "")];
+  const focusText = focus.championId === null ? null : `${focus.slot === "teammate" ? "with" : "vs"} ${escapeHtml(championName(focus.championId))}`;
   const twoLines = ([firstLine, secondLine]) => `${firstLine}<br>${secondLine}`;
-  const showCounter = !isDuo;
-  const showExpected = !isDuo && perspective !== "partner";
+  const showCounter = !!singleTables;
+  const showExpected = !!(singleTables && singleTables.expected);
   const showRawWinRate = model.unit === "pp";
   const sortButton = (key, label) => `<button type="button" data-sort="${key}" class="${state.sortKey === key ? "sorted" : ""}">${label}</button>`;
 
@@ -1315,7 +1053,7 @@ function renderSheet() {
     const expectedText = row.expected === null ? "—" : model.unit === "pp" ? formatPercent(row.expected) : formatSigned(row.expected, decimals);
     return `<tr>
       <td class="rank" data-column="rank">${rowIndex + 1}</td>
-      <td data-column="support" title="${escapeHtml(entityTitle(rowSource, rowsRole, row.rowId))}"><span class="support-cell">${entityIcon(rowSource, rowsRole, row.rowId, 28)}${escapeHtml(entityName(rowSource, rowsRole, row.rowId))}</span></td>
+      <td data-column="support"><span class="support-cell">${championIcon(row.rowId, 28)}${escapeHtml(championName(row.rowId))}</span></td>
       <td class="plot-cell" data-column="plot">${plotSvg(row, limit, "edge")}</td>
       <td class="numeric" data-column="edge"><span class="edge-value">${formatSigned(row.edge, decimals)}</span><span class="interval-text">${formatSigned(row.edgeLow, decimals)} to ${formatSigned(row.edgeHigh, decimals)}</span></td>
       ${showCounter ? `<td class="numeric optional" data-column="counter">${formatSigned(row.counter, decimals)}<span class="interval-text">±${(Math.abs(row.counterHigh - row.counterLow) / 2).toFixed(decimals)}</span></td>` : ""}
@@ -1330,7 +1068,7 @@ function renderSheet() {
       <span class="legend-item"><svg width="30" height="12" aria-hidden="true"><line x1="2" x2="28" y1="6" y2="6" stroke="var(--good)" stroke-width="2" stroke-linecap="round"/><circle cx="15" cy="6" r="4" fill="var(--good)"/></svg>Better, 90% interval above zero</span>
       <span class="legend-item"><svg width="30" height="12" aria-hidden="true"><line x1="2" x2="28" y1="6" y2="6" stroke="var(--bad)" stroke-width="2" stroke-linecap="round"/><circle cx="15" cy="6" r="4" fill="var(--bad)"/></svg>Worse, interval below zero</span>
       <span class="legend-item"><svg width="30" height="12" aria-hidden="true"><line x1="2" x2="28" y1="6" y2="6" stroke="var(--unclear)" stroke-width="2" stroke-linecap="round"/><circle cx="15" cy="6" r="4" fill="var(--panel)" stroke="var(--unclear)" stroke-width="2"/></svg>Can't tell yet</span>
-      <span class="legend-item">Units: ${model.unit === "pp" ? "win-rate points" : model.unit} vs ${isDuo ? "the average option" : `a typical ${rowsWord} pick`}</span>
+      <span class="legend-item">Units: ${model.unit === "pp" ? "win-rate points" : model.unit} vs the average ${rowsWord} option</span>
     </div>
     <div class="table-wrap">
       <table>
@@ -1340,13 +1078,13 @@ function renderSheet() {
           <th class="numeric" data-column="edge">${sortButton("edge", twoLines([edgeHeaderLines[0], `${edgeHeaderLines[1]} (${units.trim()})`]))}</th>
           ${showCounter ? `<th class="numeric optional" data-column="counter">${sortButton("counter", twoLines(counterHeaderLines))}</th>` : ""}
           ${showExpected ? `<th class="numeric optional" data-column="expected" tabindex="0">${twoLines(expectedHeaderLines)}</th>` : ""}
-          ${showRawWinRate ? `<th class="numeric optional" data-column="raw" tabindex="0">${twoLines(isDuo ? ["Raw WR", `vs ${enemyBotName}`] : ["Raw", "WR"])}</th>` : ""}
-          <th class="numeric" data-column="games">${sortButton("games", isDuo ? twoLines(["Games", `vs ${enemyBotName}`]) : "Games")}</th>
+          ${showRawWinRate ? `<th class="numeric optional" data-column="raw" tabindex="0">${twoLines(focusText ? ["Raw WR", focusText] : ["Raw", "WR"])}</th>` : ""}
+          <th class="numeric" data-column="games">${sortButton("games", focusText ? twoLines(["Games", focusText]) : "Games")}</th>
         </tr></thead>
         <tbody>${bodyHtml}</tbody>
       </table>
     </div>
-    <p class="sheet-foot">${sheetFootnote(perspective, model)}</p>`;
+    <p class="sheet-foot">${sheetFootnote(model)}</p>`;
   elements.sheet.querySelectorAll("button[data-sort]").forEach((button) => button.addEventListener("click", () => { state.sortKey = button.dataset.sort; renderSheet(); }));
 }
 
@@ -1437,7 +1175,7 @@ function renderBlindSheet() {
       </tr></thead>
       <tbody>${banBody}</tbody>
     </table></div>
-    <p class="sheet-foot">Units: ${model.unit === "pp" ? "win-rate points" : model.unit}, for your side, relative to the average bot lane in this view. These are the model's point estimates without intervals, so picks or bans a few tenths apart are effectively tied. Pick order isn't in the data, so a lane counts the same whether the enemy counterpicked you or drew it by chance; the worst-${tailPercent}% average is what an unlucky (or counterpicking) draft costs you.${groupMode() ? " Champ Groups detail: matchups borrow strength from your Champion Groups as far as the data says the groups play alike." : ""}</p>`;
+    <p class="sheet-foot">Units: ${model.unit === "pp" ? "win-rate points" : model.unit}, for your side, relative to the average bot lane in this view. These are the model's point estimates without intervals, so picks or bans a few tenths apart are effectively tied. Pick order isn't in the data, so a lane counts the same whether the enemy counterpicked you or drew it by chance; the worst-${tailPercent}% average is what an unlucky (or counterpicking) draft costs you.${groupMode() ? " Grouping is on: each matchup also learns from similar champions' games, as far as the data says they play alike." : ""}</p>`;
 }
 
 function blindExplanation(columnName) {
@@ -1472,128 +1210,54 @@ function blindExplanation(columnName) {
   return explanations[columnName];
 }
 
-function sheetFootnote(perspective, model) {
-  const typicalPick = `a typical ${roleWord(rowRole())} pick`;
+function sheetFootnote(model) {
+  const averageOption = `the average ${roleWord(rowRole())} option`;
   const measure = model.unit === "pp"
-    ? `Edge is the change in win probability against a pick-rate-weighted typical ${roleWord(rowRole())}, for a primary-role player of median experience.`
+    ? `Edge is the change in win probability against ${averageOption} (weighted by pick rate), for a primary-role player of median experience.`
     : model.unit === "CS"
-      ? `Edge is your ADC's minion lead at 10:00 relative to ${typicalPick} (lane minions only, from Riot's challenge stats).`
-      : `Edge is your bot duo's combined gold lead at 14:00 relative to ${typicalPick} (from match timelines, fetched for a random 12-25% of games).`;
-  const counter = perspective === "partner"
-    ? "Synergy only removes both champions' overall strength, leaving what the pair adds together."
-    : "Counter only removes both champions' overall strength, leaving the specific matchup.";
-  return `${measure} ${perspective === "duo" ? "" : counter} Games are raw counts in this view; low-data rows lean on the champion's overall numbers.`;
-}
-
-// ADC sheet: the same columns, worded for your ADC as the row.
-function adcColumnExplanation(columnName) {
-  const model = currentModel();
-  const perspective = state.perspective;
-  const measure = model.unit === "pp"
-    ? "your team's chance of winning, in win-rate points"
-    : model.unit === "CS"
-      ? "your ADC's lane-minion lead at 10:00"
-      : "your bot duo's combined gold lead at 14:00";
-  const heldFixed = "The other eight champions, side, region and patch are held fixed, for a player in their main role with typical experience on the champion.";
-  const opponent = { pick: "the enemy ADC", support: "the enemy support", threats: "your ADC", partner: "your support", duo: "this lane" }[perspective];
-  const groupNote = groupMode() && perspective !== "duo"
-    ? " In Champ Groups detail every number is the pick-weighted average over the group's members." : "";
-  const explanations = {
-    rank: ["#", "Position in the current sort order. Click Edge, Counter only or Games in the header to re-sort."],
-    support: [groupMode() && perspective !== "duo" ? "ADC group" : "ADC", {
-      pick: "An ADC you could pick into the selected enemy ADC. Only ADCs with at least 0.4% of bot-lane picks are listed.",
-      support: "An ADC you could pick into the selected enemy support.",
-      threats: "An ADC the enemy might pick against your selected ADC.",
-      partner: "An ADC you could play with your selected support.",
-      duo: "An ADC option for your side of this lane.",
-    }[perspective]],
-    plot: ["Interval chart", "The dot is the best estimate of the Edge and the line is its 90% interval. Blue means the whole line is above zero (reliably better), red means below zero (reliably worse), and a hollow gray dot means the data can't yet tell it apart from a typical pick."],
-    edge: ["Edge", {
-      pick: `How much picking this ADC into the enemy ADC changes ${measure}, compared with a typical ADC pick. It adds up the ADC's overall strength, the ADC-vs-ADC matchup, how the supports that ADC usually lanes with play into yours, and the usual synergy with your own support.`,
-      support: `How much picking this ADC changes ${measure} when the enemy support is the selected one, compared with a typical ADC pick: the ADC's overall strength, how that support plays into this ADC, the matchup into the ADCs it usually lanes with, and the usual synergy with your support.`,
-      threats: `How much ${measure} changes for your ADC when the enemy picks this ADC instead of a typical one. Positive is good for you, negative means this ADC is a threat.`,
-      partner: `How much playing this ADC with your support changes ${measure}, compared with a typical ADC: the ADC's own strength plus what the pair adds together.`,
-      duo: `How much this ADC changes ${measure} in this lane, compared with the average option: ADC strength, synergy with your support, the matchup into the enemy ADC and how the enemy support plays into it.`,
-    }[perspective] + " " + heldFixed + groupNote],
-    probability: ["P(better)", "The probability that the true Edge is above zero. 50% means the data can't tell; above 90% or below 10% is a fairly confident call."],
-    counter: perspective === "partner"
-      ? ["Synergy only", `What this ADC and your support add together beyond each one's overall strength. The ± value is the half-width of the 90% interval.${groupNote}`]
-      : ["Counter only", `The pure matchup between this ADC and ${opponent}, with both champions' overall strength removed. ${perspective === "threats" ? "A negative value means it specifically beats your ADC." : "A positive value means it specifically beats this pick."} The ± value is the half-width of the 90% interval.${groupNote}`],
-    expected: ["Expected", `The ${model.unit === "pp" ? "win rate" : "lead"} to expect for your side in this lane, starting from even. Unlike Edge, it also includes ${opponent === "your ADC" ? "your ADC's" : `${opponent}'s`} overall strength.${groupNote}`],
-    raw: ["Raw WR", "The plain win rate of games with this pairing, with no controls at all: what most stats sites show. It mixes in both champions' overall strength, the other eight champions and who tends to play these picks."],
-    games: ["Games", `How many games in this region had this ADC ${perspective === "partner" ? "on the same team as" : "facing"} ${perspective === "duo" ? "the enemy ADC (any, if none is picked)" : "the selected champion"}. Rows under ${LOW_DATA_GAMES} games are tagged low.`],
-    exact: ["This exact lane", "How many games in this region had exactly this lane with this ADC (every picked champion matching). Usually far too few to judge on their own, which is why Edge is built from parts that each have many games."],
-  };
-  return explanations[columnName];
+      ? `Edge is your ADC's minion lead at 10:00 relative to ${averageOption} (lane minions only, from Riot's challenge stats).`
+      : `Edge is your bot duo's combined gold lead at 14:00 relative to ${averageOption} (from match timelines, fetched for a random 12-25% of games).`;
+  const single = singlePickTables();
+  const counter = !single ? " Pick exactly one champion to also see Counter only (or Synergy only) and the expected result."
+    : single.slot === "teammateIndex" ? " Synergy only removes both champions' overall strength, leaving what the pair adds together."
+      : " Counter only removes both champions' overall strength, leaving the specific matchup.";
+  return `${measure}${counter} Games are raw counts in this view; low-data rows lean on the champion's overall numbers.`;
 }
 
 // What each table column means, worded for the current perspective and measure.
 function columnExplanation(columnName) {
   if (state.perspective === "blind") return blindExplanation(columnName);
-  if (isAdcSheet()) return adcColumnExplanation(columnName);
   const model = currentModel();
-  const perspective = state.perspective;
+  const rowWord = roleWord(rowRole());
+  const teammateWord = isAdcSheet() ? "support" : "ADC";
   const measure = model.unit === "pp"
     ? "your team's chance of winning, in win-rate points"
     : model.unit === "CS"
       ? "your ADC's lane-minion lead at 10:00"
       : "your bot duo's combined gold lead at 14:00";
   const heldFixed = "The other eight champions, side, region and patch are held fixed, for a player in their main role with typical experience on the champion.";
+  const single = singlePickTables();
+  const focus = laneFocus();
+  const focusName = focus.championId === null ? null : championName(focus.championId);
+  const pickedWho = { enemyBotIndex: "the enemy ADC", enemySupportIndex: "the enemy support", teammateIndex: `your ${teammateWord}` }[single ? single.slot : ""] || "";
+  const groupNote = groupMode() ? " Grouping is on: each matchup also learns from similar champions' games, as far as the data says they play alike." : "";
+  const parts = isAdcSheet()
+    ? "the ADC's overall strength, synergy with your support, the ADC-vs-ADC matchup and how the enemy support plays into this ADC"
+    : "the support's overall strength, synergy with your ADC, the matchup into the enemy ADC and the support-vs-support matchup";
   const explanations = {
     rank: ["#", "Position in the current sort order. Click Edge, Counter only or Games in the header to re-sort."],
-    support: ["Support", {
-      pick: "A support you could pick into the selected enemy ADC. Only supports with at least 0.4% of bot-lane picks are listed.",
-      threats: "A support the enemy might pick against your selected ADC.",
-      partner: "A support you could pair with your selected ADC.",
-      duo: "A support option for your side of this exact 2v2.",
-    }[perspective]],
-    plot: ["Interval chart", "The dot is the best estimate of the Edge and the line is its 90% interval: the true value is inside it with 90% probability. Blue means the whole line is above zero (reliably better), red means it is below zero (reliably worse), and a hollow gray dot means the line crosses zero, so the data can't yet tell it apart from a typical pick."],
-    edge: ["Edge", {
-      pick: `How much picking this support into the enemy ADC changes ${measure}, compared with picking a typical support (weighted by how often each one is picked). It adds up the support's overall strength, the matchup into this ADC, the usual synergy with your own ADC, and the enemy support this ADC usually lanes with. The small line below is the 90% interval.`,
-      threats: `How much ${measure} changes for your ADC when the enemy picks this support instead of a typical one. Positive is good for you, negative means this support is a threat. The small line below is the 90% interval.`,
-      partner: `How much pairing this support with your ADC changes ${measure}, compared with a typical support: the support's own strength plus what the pair adds together. The small line below is the 90% interval.`,
-      duo: `How much this support changes ${measure} in this exact 2v2, compared with the average option: support strength, synergy with your ADC, the matchup into the enemy ADC and, if chosen, the support-vs-support matchup.`,
-    }[perspective] + " " + heldFixed],
-    probability: ["P(better)", "The probability that the true Edge is above zero, meaning this choice is genuinely better for you than a typical pick rather than just lucky in this sample. 50% means the data can't tell; above 90% or below 10% is a fairly confident call."],
-    counter: perspective === "partner"
-      ? ["Synergy only", "What this pair adds together beyond each champion's own overall strength. A support that is strong with everyone scores zero here; a positive value means it works especially well with this ADC. The ± value is the half-width of the 90% interval."]
-      : ["Counter only", `The pure matchup between this support and the ${perspective === "threats" ? "your" : "enemy"} ADC, with both champions' overall strength removed. A support that is strong into everything scores zero here; ${perspective === "threats" ? "a negative value means it specifically beats your ADC" : "a positive value means it specifically beats this ADC"}. The ± value is the half-width of the 90% interval.`],
-    expected: ["Expected", model.unit === "pp"
-      ? `The win rate to expect for your side in this lane, starting from an even game. Unlike Edge, it also includes the ${perspective === "threats" ? "your ADC's" : "enemy ADC's"} overall strength, so it answers "how does this lane actually go", not "is this better than my other options".`
-      : `The lead to expect for your side in this lane, starting from even. Unlike Edge, it also includes the ${perspective === "threats" ? "your ADC's" : "enemy ADC's"} overall strength.`],
-    raw: perspective === "duo"
-      ? [`Raw WR vs ${duoBotLabel(state.duoEnemyBot)}`, `This support's plain win rate in every game against ${duoBotLabel(state.duoEnemyBot)} in this region, whoever the two other bot laners were. It is NOT the win rate of this exact 2v2, and it has no controls, so it mixes in both champions' overall strength, the other eight champions and who tends to play these picks. On a hundred or so games it can sit 5pp from the truth by chance alone.`]
-      : ["Raw WR", "The plain win rate of games with this pairing, with no controls at all: what most stats sites show. It mixes in both champions' overall strength, the other eight champions and who tends to play these picks, so it can disagree sharply with Edge, especially on small samples."],
-    games: perspective === "duo"
-      ? [`Games vs ${duoBotLabel(state.duoEnemyBot)}`, `How many games in this region had this support facing ${duoBotLabel(state.duoEnemyBot)}, with any ADC on its side and any support on the enemy side. This is the sample behind the Raw WR column, not the count for this exact lane.`]
-      : ["Games", `How many games in this view had this ${perspective === "partner" ? "support and ADC on the same team" : "support facing this ADC"}. Rows under ${LOW_DATA_GAMES} games are tagged low: their Edge leans mostly on the champions' overall numbers rather than on this specific pairing.`],
-    exact: ["This exact lane", `How many games in this region had exactly this 2v2: ${duoBotLabel(state.duoMyBot)} with this support against ${duoBotLabel(state.duoEnemyBot)}${state.duoEnemySupport === "any" ? " (with any enemy support, since none is picked)" : ` and ${championName(Number(state.duoEnemySupport))}`}. Usually far too few to judge on their own, which is why Edge is built from parts that each have many games: support strength, synergy with your ADC, the matchup into the enemy ADC and the support-vs-support matchup.`],
+    support: [rowWord, `A ${rowWord} you could pick for your side of this lane. Only ${rowWord}s with at least 0.4% of their role's picks are listed; champions already in the lane are left out.`],
+    plot: ["Interval chart", "The dot is the best estimate of the Edge and the line is its 90% interval: the true value is inside it with 90% probability. Blue means the whole line is above zero (reliably better), red means below zero (reliably worse), and a hollow gray dot means the data can't yet tell it apart from the average option."],
+    edge: ["Edge", `How much picking this ${rowWord} changes ${measure}, compared with the average ${rowWord} you could pick here (weighted by pick rate). It adds up ${parts}. A slot not picked yet is averaged over who plays there; an unpicked enemy support counts the supports the picked enemy ADC usually lanes with, and the other way round. ${single ? "The interval is exact." : "With more than one champion picked the interval is approximate (it ignores correlations between terms)."} ${heldFixed}${groupNote}`],
+    counter: single && single.slot === "teammateIndex"
+      ? ["Synergy only", `What this ${rowWord} and your ${teammateWord} add together beyond each one's overall strength. One that is strong with everyone scores zero here; a positive value means it works especially well with this partner. The ± value is the half-width of the 90% interval.${groupNote}`]
+      : ["Counter only", `The pure matchup between this ${rowWord} and ${pickedWho}, with both champions' overall strength removed. A pick that is strong into everything scores zero here; a positive value means it specifically beats ${pickedWho}. The ± value is the half-width of the 90% interval.${groupNote}`],
+    expected: ["Expected", `The ${model.unit === "pp" ? "win rate" : "lead"} to expect for your side in this lane, starting from an even game. Unlike Edge, it also includes ${pickedWho}'s overall strength, so it answers "how does this lane actually go", not "is this better than my other options".${groupNote}`],
+    raw: [focusName ? `Raw WR ${focus.slot === "teammate" ? "with" : "vs"} ${focusName}` : "Raw WR", focusName
+      ? `This ${rowWord}'s plain win rate in every game in this region ${focus.slot === "teammate" ? "with" : "against"} ${focusName}, whoever the other bot laners were. It is NOT the win rate of this exact 2v2, and it has no controls, so it mixes in both champions' overall strength, the other eight champions and who tends to play these picks. On a hundred or so games it can sit 5pp from the truth by chance alone.`
+      : `This ${rowWord}'s plain win rate over all its games in this region, with no controls.`],
+    games: [focusName ? `Games ${focus.slot === "teammate" ? "with" : "vs"} ${focusName}` : "Games", `How many games in this region had this ${rowWord} ${focusName ? `${focus.slot === "teammate" ? "on the same team as" : "facing"} ${focusName}` : "in bot lane"}: the sample behind the Raw WR column (the enemy ADC is counted first, then the enemy support, then your ${teammateWord}). Rows under ${LOW_DATA_GAMES} games are tagged low.`],
   };
-  if (perspective === "duo" && groupMode()) {
-    const byGroup = " In Champ Groups detail each champion counts as its whole group, so this counts games with any member of each group.";
-    for (const columnKey of ["exact", "games", "raw"]) {
-      explanations[columnKey] = [explanations[columnKey][0], explanations[columnKey][1] + byGroup];
-    }
-  }
-  if (perspective === "support") {
-    explanations.support = ["Support", "A support you could pick into the selected enemy support. Only supports with at least 0.4% of support picks are listed."];
-    explanations.edge = ["Edge", `How much picking this support changes ${measure} when the enemy support is the selected one, compared with picking a typical support. It adds up the support's overall strength, the support-vs-support matchup, the matchup into the ADCs the enemy support usually lanes with, and the usual synergy with your own ADC. The small line below is the 90% interval. ${heldFixed}`];
-    explanations.counter = ["Counter only", "The pure support-vs-support matchup, with both supports' overall strength removed. A support that is strong into everything scores zero here; a positive value means it specifically beats this support. The ± value is the half-width of the 90% interval."];
-    explanations.expected = ["Expected", model.unit === "pp"
-      ? `The win rate to expect for your side in this lane, starting from an even game. Unlike Edge, it also includes the enemy support's overall strength, so it answers "how does this lane actually go", not "is this better than my other options".`
-      : "The lead to expect for your side in this lane, starting from even. Unlike Edge, it also includes the enemy support's overall strength."];
-    explanations.games = ["Games", `How many games in this region had this support facing the selected enemy support. Rows under ${LOW_DATA_GAMES} games are tagged low: their Edge leans mostly on the champions' overall numbers rather than on this specific matchup.`];
-  }
-  if (groupMode() && perspective !== "duo") {
-    const opponentKind = perspective === "support" ? "support" : "ADC";
-    const groupAverage = ` In this view every number is the pick-weighted average over the group's members, against the selected ${opponentKind} group's members weighted the same way.`;
-    explanations.support = ["Support group", "One of your support groups from Champion Groups (hover the name to see its members). The model estimated each group pair's shared effect plus each champion's own deviation from it, so champions in a group borrow strength from each other only as far as the data says the group really plays alike."];
-    explanations.games = ["Games", `How many games in this region had any member of this support group ${perspective === "partner" ? "on the same team as" : "facing"} any member of the selected ${opponentKind} group. Rows under ${LOW_DATA_GAMES} games are tagged low.`];
-    explanations.raw = ["Raw WR", "The plain win rate over all those games, with no controls: it mixes in the members' overall strength, the other eight champions and who tends to play these picks."];
-    for (const columnKey of ["edge", "counter", "expected", "probability"]) {
-      if (explanations[columnKey]) explanations[columnKey] = [explanations[columnKey][0], explanations[columnKey][1] + groupAverage];
-    }
-  }
   return explanations[columnName];
 }
 
@@ -1630,7 +1294,7 @@ function renderMethod() {
     [`±${toPoints(synergySpread)} pp`, "Typical size of support + own-ADC synergy (1 SD)"],
     [`${formatSigned(100 * (logistic(winModel.blue_side.estimate) - 0.5), 2)} pp`, "Blue-side advantage, all else equal"],
   ];
-  // From the pooled (Champ Groups) fit: how much of a counter is shared across a group pair.
+  // From the pooled (grouping) fit: how much of a counter is shared across a group pair.
   const pooledWinModel = pooledAvailable() ? data.pooled_models.win : null;
   if (pooledWinModel && pooledWinModel.block_summary && pooledWinModel.block_summary.group_support_vs_bot) {
     const pooledPriors = pooledWinModel.prior_sd_by_block;
@@ -1692,20 +1356,19 @@ const SHEET_DEKS = {
   adc: "Which ADC to pick into an enemy bot lane. Every number is adjusted for the rest of the draft, your support, autofill, champion experience and elo, and comes with an honest interval.",
 };
 function syncFilterInputs() {
-  for (const name of ["perspective", "region", "metric", "detail"]) {
+  for (const name of ["perspective", "region", "metric"]) {
     const input = document.querySelector(`input[name="${name}"][value="${state[name]}"]`);
     if (input) input.checked = true;
   }
+  document.getElementById("detail-groups").checked = state.detail === "groups";
   elements.sheetSwitch.querySelectorAll("button[data-sheet]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.sheet === state.sheet)));
   elements.sheetDek.textContent = SHEET_DEKS[state.sheet];
   document.title = isAdcSheet() ? "ADC Counter Sheet" : "Support Counter Sheet";
-  document.querySelector('label[for="perspective-partner"]').textContent = isAdcSheet() ? "Partner for my support" : "Partner for my ADC";
 }
 
 function render() {
   if (!currentView()) state.region = "NA";
-  // Champ Groups: available only when the pooled fit exists. The 2v2 calculator always picks
-  // individual champions; in Champ Groups mode its numbers come from the pooled fit.
+  // The grouping switch exists only when the pooled fit was exported.
   const groupsAvailable = pooledAvailable();
   document.getElementById("detail-filter").hidden = !groupsAvailable;
   if (!groupsAvailable) state.detail = "champions";
@@ -1726,22 +1389,22 @@ document.getElementById("filters").addEventListener("change", (event) => {
 });
 document.getElementById("filters").addEventListener("submit", (event) => event.preventDefault());
 elements.grid.addEventListener("click", (event) => {
+  // The grid is only shown in Blind & ban, where a click toggles a champion in or out of your pool.
   const button = event.target.closest("button[data-champion]");
   if (!button) return;
-  if (state.perspective === "blind") {
-    const championId = Number(button.dataset.champion);
-    const pool = currentPool();
-    setCurrentPool(pool.includes(championId)
-      ? pool.filter((poolChampionId) => poolChampionId !== championId)
-      : [...pool, championId]);
-    savePool();
-    renderPicker();
-    renderSheet();
-    return;
-  }
-  state.championByPerspective[selectionKey()] = Number(button.dataset.champion);
+  const championId = Number(button.dataset.champion);
+  const pool = currentPool();
+  setCurrentPool(pool.includes(championId)
+    ? pool.filter((poolChampionId) => poolChampionId !== championId)
+    : [...pool, championId]);
+  savePool();
   renderPicker();
   renderSheet();
+});
+document.getElementById("detail-groups").addEventListener("change", (event) => {
+  state.detail = event.target.checked ? "groups" : "champions";
+  saveFilters();
+  render();
 });
 // Column explanations: hovering (or keyboard-focusing) any header or cell explains that column.
 elements.sheet.addEventListener("mouseover", (event) => {
