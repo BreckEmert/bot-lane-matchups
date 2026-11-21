@@ -80,7 +80,7 @@ a { color: inherit; }
 .sheet-switch button[aria-pressed="true"] { color: var(--ink); font-size: 1em; cursor: default; border-bottom-color: transparent; order: -1; }
 .dek { color: var(--ink-2); max-width: 62ch; margin-top: 8px; font-size: 15px; }
 .status-line { display: flex; flex-wrap: wrap; gap: 6px; }
-.status-chip { background: var(--chip); color: var(--ink-2); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.status-chip { background: var(--chip); color: var(--ink-2); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500; max-width: 100%; }
 .notice { margin-top: 16px; background: var(--notice-bg); color: var(--notice-ink); border-radius: var(--radius); padding: 10px 14px; font-size: 13px; max-width: 90ch; }
 
 /* ---------- filter bar ---------- */
@@ -142,6 +142,8 @@ a { color: inherit; }
 .sheet-head { display: flex; gap: 14px; align-items: center; }
 .duo-warning { margin: 8px 0 0; padding: 7px 10px; border-left: 3px solid var(--bad); background: color-mix(in srgb, var(--bad) 10%, transparent); color: var(--ink); font-size: 13px; line-height: 1.45; border-radius: 0 4px 4px 0; }
 .sheet-head img { width: 60px; height: 60px; border-radius: 8px; flex: none; }
+.duo-icons { display: flex; gap: 6px; flex: none; }
+@media (max-width: 560px) { .sheet-head { flex-wrap: wrap; } .sheet-head img { width: 48px; height: 48px; } }
 .sheet-head h2 { font-size: clamp(26px, 3.6vw, 34px); line-height: 1.05; }
 .sheet-meta { color: var(--ink-2); margin-top: 4px; }
 .sheet-summary { display: flex; flex-wrap: wrap; gap: 8px 22px; color: var(--ink-2); font-size: 13px; }
@@ -250,6 +252,7 @@ footer p { max-width: 95ch; }
       <legend class="eyebrow">View</legend>
       <div class="segmented">
         <input type="radio" name="perspective" id="perspective-duo" value="duo" checked><label for="perspective-duo">2v2 lane</label>
+        <input type="radio" name="perspective" id="perspective-duoban" value="duoban"><label for="perspective-duoban">Duo</label>
         <input type="radio" name="perspective" id="perspective-blind" value="blind"><label for="perspective-blind">Blind &amp; ban</label>
       </div>
     </fieldset>
@@ -297,6 +300,10 @@ footer p { max-width: 95ch; }
       <label><span class="eyebrow" id="duo-my-label">Your ADC</span><select id="duo-my-bot"></select></label>
       <label><span class="eyebrow">Enemy ADC</span><select id="duo-enemy-bot"></select></label>
       <label><span class="eyebrow">Enemy support</span><select id="duo-enemy-support"></select></label>
+    </div>
+    <div class="duo-pickers" id="duoban-pickers" hidden>
+      <label><span class="eyebrow">Your ADC</span><select id="duoban-bot"></select></label>
+      <label><span class="eyebrow">Your support</span><select id="duoban-support"></select></label>
     </div>
     <div class="duo-pickers" id="blind-options" hidden>
       <label><span class="eyebrow" id="blind-partner-label">Your ADC</span><select id="blind-my-bot"></select></label>
@@ -385,10 +392,14 @@ const state = {
   duoMySupport: "any",
   blindAdcPool: [222, 51, 81, 22],  // Jinx, Caitlyn, Ezreal, Ashe
   blindMySupport: "any",
+  // Duo view: your fixed ADC + support (null until the data loads: then the most-picked of each).
+  duoBanBot: null,
+  duoBanSupport: null,
 };
 let data = null;
 const STORAGE_KEY = "support-counter-sheet-filters-v3";
 const POOL_STORAGE_KEY = "support-counter-sheet-blind-pool-v1";
+const DUO_STORAGE_KEY = "support-counter-sheet-duo-v1";
 const ADC_POOL_STORAGE_KEY = "support-counter-sheet-blind-adc-pool-v1";
 const MINUS = "−";
 const LOW_DATA_GAMES = 60;
@@ -406,6 +417,9 @@ const elements = {
   duoEnemySupport: document.getElementById("duo-enemy-support"),
   blindOptions: document.getElementById("blind-options"),
   blindMyBot: document.getElementById("blind-my-bot"),
+  duoBanPickers: document.getElementById("duoban-pickers"),
+  duoBanBot: document.getElementById("duoban-bot"),
+  duoBanSupport: document.getElementById("duoban-support"),
   duoMyLabel: document.getElementById("duo-my-label"),
   blindPartnerLabel: document.getElementById("blind-partner-label"),
   sheetSwitch: document.getElementById("sheet-switch"),
@@ -459,7 +473,9 @@ function restoreFilters() {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
     for (const key of ["sheet", "perspective", "region", "metric", "detail"]) if (saved[key]) state[key] = saved[key];
     // Older visits may have saved a view that is now part of the 2v2 lane.
-    if (state.perspective !== "blind") state.perspective = "duo";
+    if (!["duo", "duoban", "blind"].includes(state.perspective)) state.perspective = "duo";
+    const savedDuo = JSON.parse(localStorage.getItem(DUO_STORAGE_KEY) || "null");
+    if (savedDuo) { state.duoBanBot = Number(savedDuo.bot); state.duoBanSupport = Number(savedDuo.support); }
     const savedPool = JSON.parse(localStorage.getItem(POOL_STORAGE_KEY) || "null");
     if (Array.isArray(savedPool)) state.blindPool = savedPool.map(Number);
     const savedAdcPool = JSON.parse(localStorage.getItem(ADC_POOL_STORAGE_KEY) || "null");
@@ -906,14 +922,28 @@ function pickerChampions(source, role) {
   return order;
 }
 
-// The 2v2 lane uses the three dropdowns; Blind & ban uses the champion grid for your pool.
+// The 2v2 lane uses three dropdowns, Duo two; Blind & ban uses the champion grid for your pool.
 function renderPicker() {
   const isDuo = state.perspective === "duo";
-  elements.singlePicker.hidden = isDuo;
+  const isDuoBan = state.perspective === "duoban";
+  const isBlind = state.perspective === "blind";
+  elements.singlePicker.hidden = !isBlind;
+  elements.blindOptions.hidden = !isBlind;
   elements.duoPickers.hidden = !isDuo;
-  elements.blindOptions.hidden = isDuo;
+  elements.duoBanPickers.hidden = !isDuoBan;
   if (isDuo) renderDuoPickers();
+  else if (isDuoBan) renderDuoBanPickers();
   else renderPoolPicker();
+}
+
+function renderDuoBanPickers() {
+  if (state.duoBanBot === null || !data.bots.includes(state.duoBanBot)) state.duoBanBot = pickerChampions(championSource(), "bot")[0].botId;
+  if (state.duoBanSupport === null || !data.supports.includes(state.duoBanSupport)) state.duoBanSupport = pickerChampions(championSource(), "support")[0].botId;
+  elements.duoBanBot.innerHTML = alphabeticalOptionHtml(data.bots, state.duoBanBot);
+  elements.duoBanSupport.innerHTML = alphabeticalOptionHtml(data.supports.filter((supportId) => supportId !== state.duoBanBot), state.duoBanSupport);
+}
+function saveDuo() {
+  try { localStorage.setItem(DUO_STORAGE_KEY, JSON.stringify({ bot: state.duoBanBot, support: state.duoBanSupport })); } catch (error) { /* storage unavailable */ }
 }
 
 // Blind & ban: the grid toggles champions in and out of your pool (supports, or ADCs on the ADC sheet).
@@ -1001,6 +1031,7 @@ function renderSheet() {
   const view = currentView();
   if (!view) { elements.sheet.innerHTML = `<p class="loading">No data for this region and elo yet.</p>`; return; }
   if (state.perspective === "blind") { renderBlindSheet(); return; }
+  if (state.perspective === "duoban") { renderDuoBanSheet(); return; }
   // A champion already in the lane can't be picked again, so it isn't a row (e.g. Swain as a support into a Swain bot).
   const rows = rowsForLane().filter((row) => !duoPickedIds().includes(row.rowId));
   const rowsRole = rowRole();
@@ -1178,6 +1209,116 @@ function renderBlindSheet() {
     <p class="sheet-foot">Units: ${model.unit === "pp" ? "win-rate points" : model.unit}, for your side, relative to the average bot lane in this view. These are the model's point estimates without intervals, so picks or bans a few tenths apart are effectively tied. Pick order isn't in the data, so a lane counts the same whether the enemy counterpicked you or drew it by chance; the worst-${tailPercent}% average is what an unlucky (or counterpicking) draft costs you.${groupMode() ? " Grouping is on: each matchup also learns from similar champions' games, as far as the data says they play alike." : ""}</p>`;
 }
 
+// ---------------------------------------------------------------- duo bans
+// Your ADC and support are both fixed; the enemy ADC and support are drawn by pick rate. Each ban is
+// scored like Blind & ban (lanes where the enemy plays it are removed), and reported with the two
+// things that make it worth banning: how often you face it and how your lane goes against it.
+function duoBanPlan() {
+  const analysis = buildBlindAnalysis([state.duoBanSupport], state.duoBanBot, "support");
+  const laneSet = analysis.laneSets[0];
+  const noBan = badLuckOutcome(laneSet, null, state.blindTail);
+  const totalWeight = laneSet.lanes.reduce((sum, lane) => sum + lane.weight, 0);
+  const bans = analysis.banCandidates.map((bannedId) => {
+    const outcome = badLuckOutcome(laneSet, bannedId, state.blindTail);
+    if (!outcome) return null;
+    let facedWeight = 0;
+    let facedValueSum = 0;
+    for (const lane of laneSet.lanes) {
+      if (lane.enemyBotId !== bannedId && lane.enemySupportId !== bannedId) continue;
+      facedWeight += lane.weight;
+      facedValueSum += lane.weight * lane.value;
+    }
+    if (facedWeight === 0) return null;
+    const roles = [data.bots.includes(bannedId) ? "ADC" : null, data.supports.includes(bannedId) ? "Support" : null].filter(Boolean).join(" / ");
+    return {
+      bannedId, roles, ...outcome,
+      gain: outcome.average - noBan.average,
+      tailGain: outcome.tail - noBan.tail,
+      facedShare: facedWeight / totalWeight,
+      laneVersusThem: facedValueSum / facedWeight,
+    };
+  }).filter(Boolean).sort((first, second) => second.gain - first.gain);
+  return { laneSet, noBan, bans };
+}
+
+function renderDuoBanSheet() {
+  const model = currentModel();
+  const plan = duoBanPlan();
+  const decimals = model.unit === "pp" ? 1 : model.decimals;
+  const unit = model.unit === "pp" ? " pp" : unitLabel(model);
+  const unitName = model.unit === "pp" ? "win-rate pp" : model.unit === "CS" ? "CS at 10:00" : "gold at 14:00";
+  const formatValue = (value) => (value === null || value === undefined ? "—" : formatSigned(value, decimals));
+  const valueClass = (value) => (value < 0 ? "value-bad" : "value-good");
+  const beforeAfter = (before, after) => `<span class="${valueClass(before)}">${formatValue(before)}</span> → <span class="${valueClass(after)}">${formatValue(after)}</span>`;
+  const championCell = (championId, size = 28) => `<span class="support-cell">${championIcon(championId, size)}${escapeHtml(championName(championId))}</span>`;
+  const threatList = (threats) => `<span class="threat-list">${threats.slice(0, 5).map((threat) =>
+    `<span class="support-cell">${championIcon(threat.championId, 22)}${escapeHtml(championName(threat.championId))} <span class="${valueClass(threat.value)}">${formatValue(threat.value)}</span><span class="threat-share">/${(100 * threat.share).toFixed(1)}%</span></span>`).join("")}</span>`;
+  const tailPercent = Math.round(state.blindTail * 100);
+  const botName = escapeHtml(championName(state.duoBanBot));
+  const supportName = escapeHtml(championName(state.duoBanSupport));
+  const best = plan.bans[0];
+
+  const callHtml = `<div class="blind-call" role="note">
+      <div class="blind-call-item" data-column="duoban-call"><img src="${iconPath(best.bannedId)}" alt=""><div><span class="eyebrow">Ban</span><strong>${escapeHtml(championName(best.bannedId))}</strong></div></div>
+      <p class="blind-call-note">Your duo's average lane: <strong class="${valueClass(plan.noBan.average)}">${formatValue(plan.noBan.average)}${unit}</strong> → <strong class="${valueClass(best.average)}">${formatValue(best.average)}${unit}</strong> with this ban (a typical lane is 0). You face ${escapeHtml(championName(best.bannedId))} in ${formatPercent(best.facedShare)} of lanes and average <strong class="${valueClass(best.laneVersusThem)}">${formatValue(best.laneVersusThem)}${unit}</strong> there. Your worst ${tailPercent}% of lanes: ${beforeAfter(plan.noBan.tail, best.tail)}${unit}.</p>
+    </div>`;
+
+  const banBody = plan.bans.slice(0, 10).map((ban, banIndex) => `<tr>
+      <td class="rank" data-column="ban-rank">${banIndex + 1}</td>
+      <td data-column="duoban-champion">${championCell(ban.bannedId)}</td>
+      <td data-column="duoban-role">${ban.roles}</td>
+      <td class="numeric" data-column="duoban-faced">${formatPercent(ban.facedShare)}</td>
+      <td class="numeric" data-column="duoban-versus"><span class="${valueClass(ban.laneVersusThem)}">${formatValue(ban.laneVersusThem)}</span></td>
+      <td class="numeric" data-column="duoban-gain">${formatSigned(ban.gain, decimals + 1)}</td>
+      <td class="numeric" data-column="duoban-tail-gain">${formatSigned(ban.tailGain, decimals + 1)}</td>
+    </tr>`).join("");
+
+  elements.sheet.innerHTML = `<div class="sheet-head"><span class="duo-icons">${championIcon(state.duoBanBot, 56)}${championIcon(state.duoBanSupport, 56)}</span><div><h2>${botName} + ${supportName}: what to ban</h2>
+      <p class="sheet-meta">Your duo is fixed; the enemy ADC and support are drawn by how often each is played. Each lane is scored by the fitted model in ${unitName}, relative to the average lane. A ban is worth roughly how often you face that champion times how much worse your lane goes against them.</p></div></div>
+    ${callHtml}
+    <h3 class="blind-section-title">Best bans <span class="sheet-meta">(values in ${unitName})</span></h3>
+    <div class="table-wrap"><table style="min-width: 0">
+      <thead><tr>
+        <th data-column="ban-rank" tabindex="0">#</th>
+        <th data-column="duoban-champion" tabindex="0">Ban</th>
+        <th data-column="duoban-role" tabindex="0">Role</th>
+        <th class="numeric" data-column="duoban-faced" tabindex="0">You face<br>them in</th>
+        <th class="numeric" data-column="duoban-versus" tabindex="0">Your lane<br>vs them</th>
+        <th class="numeric" data-column="duoban-gain" tabindex="0">Gain from<br>the ban</th>
+        <th class="numeric" data-column="duoban-tail-gain" tabindex="0">Worst ${tailPercent}%<br>gain</th>
+      </tr></thead>
+      <tbody>${banBody}</tbody>
+    </table></div>
+    <h3 class="blind-section-title">Worst lanes for this duo</h3>
+    <div class="table-wrap"><table style="min-width: 0">
+      <thead><tr>
+        <th data-column="blind-adc-threats" tabindex="0">Worst enemy ADCs<br>(${unitLabel(model).trim()} / pick rate)</th>
+        <th data-column="blind-support-threats" tabindex="0">Worst enemy supports<br>(${unitLabel(model).trim()} / pick rate)</th>
+      </tr></thead>
+      <tbody><tr>
+        <td data-column="blind-adc-threats">${threatList(plan.laneSet.enemyBotThreats)}</td>
+        <td data-column="blind-support-threats">${threatList(plan.laneSet.enemySupportThreats)}</td>
+      </tr></tbody>
+    </table></div>
+    <p class="sheet-foot">Units: ${model.unit === "pp" ? "win-rate points" : model.unit}, for your side, relative to the average bot lane in this view. These are point estimates without intervals, so bans a few hundredths apart are effectively tied. A frequent, mildly bad matchup can be a better ban than a rare, awful one; the worst-lanes table shows the awful ones regardless of how often they come up.${groupMode() ? " Grouping is on: each matchup also learns from similar champions' games, as far as the data says they play alike." : ""}</p>`;
+}
+
+function duoBanExplanation(columnName) {
+  const explanations = {
+    "duoban-call": ["Ban", "The ban that most raises your duo's average lane: about how often you face that champion times how much worse your lane goes against them."],
+    "ban-rank": ["#", "Bans ranked by how much they raise your duo's average lane."],
+    "duoban-champion": ["Ban", "An enemy champion to ban. Your own ADC and support can't be banned here."],
+    "duoban-role": ["Role", "Where you'd face them: as the enemy ADC, the enemy support, or either."],
+    "duoban-faced": ["You face them in", "The share of your lanes with this champion on the enemy side (its pick rate in that role, or both roles combined)."],
+    "duoban-versus": ["Your lane vs them", "Your duo's average lane when they're on the enemy side, with whoever they lane with. Includes their overall strength, so a strong champion you match up fine against can still be negative."],
+    "duoban-gain": ["Gain from the ban", "How much your average lane goes up when they're banned. About the share of lanes you face them times how much below your usual lane those lanes are."],
+    "duoban-tail-gain": [`Worst ${Math.round(state.blindTail * 100)}% gain`, `How much the ban improves your worst ${Math.round(state.blindTail * 100)}% of lanes. A rare but lopsided matchup scores high here and low on the average.`],
+    "blind-adc-threats": ["Worst enemy ADCs", "The five enemy ADCs that leave your duo worst off: your average lane against them (any support with them) / how often they're the enemy ADC."],
+    "blind-support-threats": ["Worst enemy supports", "The five enemy supports that leave your duo worst off: your average lane against them (any ADC with them) / how often they're the enemy support."],
+  };
+  return explanations[columnName];
+}
+
 function blindExplanation(columnName) {
   const tailPercent = Math.round(state.blindTail * 100);
   const explanations = {
@@ -1227,6 +1368,7 @@ function sheetFootnote(model) {
 // What each table column means, worded for the current perspective and measure.
 function columnExplanation(columnName) {
   if (state.perspective === "blind") return blindExplanation(columnName);
+  if (state.perspective === "duoban") return duoBanExplanation(columnName);
   const model = currentModel();
   const rowWord = roleWord(rowRole());
   const teammateWord = isAdcSheet() ? "support" : "ADC";
@@ -1570,7 +1712,9 @@ function makeFilterable(selectElement) {
     .observe(selectElement, { childList: true, subtree: true });
   showSelectedLabel();
 }
-[elements.duoMyBot, elements.duoEnemyBot, elements.duoEnemySupport, elements.blindMyBot].forEach(makeFilterable);
+elements.duoBanBot.addEventListener("change", () => { state.duoBanBot = Number(elements.duoBanBot.value); saveDuo(); renderPicker(); renderSheet(); });
+elements.duoBanSupport.addEventListener("change", () => { state.duoBanSupport = Number(elements.duoBanSupport.value); saveDuo(); renderSheet(); });
+[elements.duoMyBot, elements.duoEnemyBot, elements.duoEnemySupport, elements.blindMyBot, elements.duoBanBot, elements.duoBanSupport].forEach(makeFilterable);
 
 async function boot() {
   try {
