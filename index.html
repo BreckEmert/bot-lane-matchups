@@ -278,7 +278,7 @@ footer p { max-width: 95ch; }
         <input type="radio" name="elo" id="elo-diamond" value="diamond_plus" checked><label for="elo-diamond" title="All numbers are for Diamond, Master, Grandmaster and Challenger games">Diamond+</label>
       </div>
     </fieldset>
-    <label class="toggle" id="detail-filter" title="Rare matchups have few games of their own. With this on, each champion's matchups also learn from similar champions (from the Champion Groups), but only as far as the data says those champions really play alike. Rows are still single champions.">
+    <label class="toggle" id="detail-filter" title="Treats each Champion Group as one champion: its members' games are pooled, so every number (strength, synergy, matchups) is estimated per group with much narrower intervals. Rows, pickers and bans become groups. Champions in no group stay themselves.">
       <input type="checkbox" id="detail-groups" role="switch">
       <span class="toggle-track" aria-hidden="true"></span>
       <span>Get more statistical power by grouping similar champions</span>
@@ -379,7 +379,7 @@ const state = {
   region: "NA",
   bracket: "diamond_plus",
   metric: "win",
-  detail: "champions",          // "groups" = the fit that pools matchups within Champion Groups
+  detail: "champions",          // "groups" = each Champion Group merged into one champion, everywhere
   duoMyBot: "any",
   duoEnemyBot: null,            // null until the data loads: then the most-picked ADC
   duoEnemySupport: "any",
@@ -396,7 +396,13 @@ const state = {
   duoBanBot: null,
   duoBanSupport: null,
 };
+// `data` is what every view reads: the per-champion results, or (grouping on) the same shape with
+// each Champion Group standing in for its champions: its own fit, rows, pickers and pools.
 let data = null;
+let championData = null;
+let groupData = null;
+let groupIdByChampion = { support: {}, bot: {} };
+let championSelectionsBeforeGrouping = null;
 const STORAGE_KEY = "support-counter-sheet-filters-v3";
 const POOL_STORAGE_KEY = "support-counter-sheet-blind-pool-v1";
 const DUO_STORAGE_KEY = "support-counter-sheet-duo-v1";
@@ -430,20 +436,27 @@ const elements = {
 };
 
 // ---------------------------------------------------------------- helpers
+// A group reads as its name plus its first few members ("Burst (Zyra, Brand, Lux +2)").
 function championName(championId) {
   const champion = data.champions[String(championId)];
-  return champion ? champion.name : String(championId);
+  if (!champion) return String(championId);
+  if (!champion.members) return champion.name;
+  const shownMembers = champion.members.slice(0, 3).join(", ");
+  const hiddenCount = champion.members.length - 3;
+  return `${champion.name} (${shownMembers}${hiddenCount > 0 ? ` +${hiddenCount}` : ""})`;
+}
+// Every member listed: for dropdowns and search, so typing any member's name finds the group.
+function championLongName(championId) {
+  const champion = data.champions[String(championId)];
+  if (!champion || !champion.members) return championName(championId);
+  return `${champion.name}: ${champion.members.join(", ")}`;
 }
 function iconPath(championId) { return `icons/${championId}.png`; }
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
 }
-// Grouping off reads the unpooled fit; grouping on reads the fit pooled within Champion Groups.
-function pooledAvailable() { return !!(data.pooled_models && Object.keys(data.pooled_models).length); }
-function currentModel() {
-  const models = state.detail === "groups" && pooledAvailable() ? data.pooled_models : data.models;
-  return models[state.metric] || models.win;
-}
+function groupsAvailable() { return groupData !== null; }
+function currentModel() { return data.models[state.metric] || data.models.win; }
 function currentView() { return currentModel().views[`${state.region}|${state.bracket}`]; }
 function logistic(value) { return 1 / (1 + Math.exp(-value)); }
 function formatSigned(value, decimals) {
@@ -482,7 +495,9 @@ function restoreFilters() {
     if (Array.isArray(savedAdcPool)) state.blindAdcPool = savedAdcPool.map(Number);
   } catch (error) { /* ignore unreadable storage */ }
 }
+// Pools and the Duo pair are saved as champions only; picks made with grouping on are group ids.
 function savePool() {
+  if (groupMode()) return;
   try {
     localStorage.setItem(POOL_STORAGE_KEY, JSON.stringify(state.blindPool));
     localStorage.setItem(ADC_POOL_STORAGE_KEY, JSON.stringify(state.blindAdcPool));
@@ -507,9 +522,72 @@ function transposeRaw(gamesMatrix, winRateMatrix, invertWinRate) {
 }
 
 // ---------------------------------------------------------------- champion data for a view
-// Grouping on: every number comes from the fit that pools matchups within Champion Groups. Rows and
-// pickers are always single champions.
-function groupMode() { return state.detail === "groups" && pooledAvailable(); }
+// Grouping on: the fit where each Champion Group was merged into one champion before fitting, so its
+// strength, synergies and matchups are estimated from all its members' games together.
+function groupMode() { return state.detail === "groups" && groupsAvailable(); }
+
+// The group version of the results: same shape as results.json, with group ids (support groups
+// 2000+, ADC groups 3000+) as the champions. Champions in no group stay themselves.
+function buildGroupData(loaded) {
+  const merged = loaded.merged;
+  if (!merged || !merged.models || !Object.keys(merged.models).length) return null;
+  const champions = { ...loaded.champions };
+  for (const [groupId, group] of Object.entries(merged.groups)) {
+    champions[groupId] = { name: group.name, members: group.member_names, tags: [] };
+    for (const memberId of group.members) groupIdByChampion[group.role][memberId] = Number(groupId);
+  }
+  return { ...loaded, supports: merged.supports, bots: merged.bots, champions, models: merged.models };
+}
+// Every saved pick, by role. Turning grouping on maps each champion to its group; turning it off
+// restores the champion picked before if its group is unchanged, else the group's most-played member.
+const SELECTION_ROLES = {
+  duoMyBot: "bot", duoEnemyBot: "bot", blindMyBot: "bot", duoBanBot: "bot",
+  duoMySupport: "support", duoEnemySupport: "support", blindMySupport: "support", duoBanSupport: "support",
+};
+const POOL_ROLES = { blindPool: "support", blindAdcPool: "bot" };
+function isPicked(choice) { return choice !== "any" && choice !== null; }
+function groupFor(choice, role) {
+  if (!isPicked(choice)) return choice;
+  const groupId = groupIdByChampion[role][Number(choice)] ?? Number(choice);
+  return idsForRole(groupData, role).includes(groupId) ? groupId : "any";
+}
+function mostPlayedMember(groupId, role) {
+  const groupEntry = groupData.champions[String(groupId)];
+  if (!groupEntry || !groupEntry.members) return groupId;   // a champion in no group
+  const championView = championData.models.win.views[`${state.region}|${state.bracket}`];
+  const championIds = idsForRole(championData, role);
+  const weights = role === "support" ? championView.support_weights : championView.bot_weights;
+  const memberIds = Object.entries(groupIdByChampion[role]).filter(([, memberGroupId]) => memberGroupId === groupId).map(([memberId]) => Number(memberId));
+  const ranked = memberIds.filter((memberId) => championIds.includes(memberId))
+    .sort((first, second) => weights[championIds.indexOf(second)] - weights[championIds.indexOf(first)]);
+  return ranked.length ? ranked[0] : "any";
+}
+function poolToGroups(pool, role) {
+  return [...new Set(pool.map((championId) => groupFor(championId, role)).filter(isPicked))];
+}
+function samePool(first, second) { return [...first].sort().join(",") === [...second].sort().join(","); }
+function setDetail(detail) {
+  const wasGroups = data === groupData && groupData !== null;
+  state.detail = detail;
+  const nowGroups = groupMode();
+  if (nowGroups && !wasGroups) {
+    championSelectionsBeforeGrouping = Object.fromEntries([...Object.keys(SELECTION_ROLES), ...Object.keys(POOL_ROLES)].map((field) => [field, state[field]]));
+    for (const [field, role] of Object.entries(SELECTION_ROLES)) state[field] = groupFor(state[field], role);
+    for (const [field, role] of Object.entries(POOL_ROLES)) state[field] = poolToGroups(state[field], role);
+    data = groupData;
+  } else if (!nowGroups && wasGroups) {
+    const before = championSelectionsBeforeGrouping || {};
+    for (const [field, role] of Object.entries(SELECTION_ROLES)) {
+      const unchanged = field in before && String(groupFor(before[field], role)) === String(state[field]);
+      state[field] = unchanged ? before[field] : (isPicked(state[field]) ? mostPlayedMember(Number(state[field]), role) : state[field]);
+    }
+    for (const [field, role] of Object.entries(POOL_ROLES)) {
+      const unchanged = field in before && samePool(poolToGroups(before[field], role), state[field]);
+      state[field] = unchanged ? before[field] : [...new Set(state[field].map((groupId) => mostPlayedMember(groupId, role)).filter(isPicked))];
+    }
+    data = championData;
+  }
+}
 // The ADC sheet's raw tables are [your ADC][column]: ADC vs ADC comes from the export; ADC vs enemy
 // support and ADC with own support are the support tables turned around.
 function withAdcRaw(raw) {
@@ -525,7 +603,9 @@ function championSource() {
     supportWeights: view.support_weights, tables: view.tables, raw: withAdcRaw(view.raw) };
 }
 function championIcon(championId, size) {
-  return `<img src="${iconPath(championId)}" alt="" width="${size}" height="${size}" loading="lazy">`;
+  const champion = data.champions[String(championId)];
+  const membersTitle = champion && champion.members ? ` title="${escapeHtml(championLongName(championId))}"` : "";
+  return `<img src="${iconPath(championId)}" alt=""${membersTitle} width="${size}" height="${size}" loading="lazy">`;
 }
 
 // ---------------------------------------------------------------- the 2v2 lane
@@ -730,8 +810,9 @@ function buildBlindAnalysis(poolIds, partnerChoice, poolRole) {
   const fixedPartnerIndex = partnerChoice === "any" ? -1 : partnerIds.indexOf(Number(partnerChoice));
   const partnerIndices = fixedPartnerIndex >= 0 ? [fixedPartnerIndex] : partnerIds.map((partnerId, partnerIndex) => partnerIndex);
   const partnerWeight = (partnerIndex) => (fixedPartnerIndex >= 0 ? 1 : partnerWeights[partnerIndex]);
-  // A champion appears at most once in a lane (plain comparisons: these run millions of times).
-  const allDistinct = (first, second, third, fourth) => first !== second && first !== third && second !== third
+  // A champion appears at most once in a lane (plain comparisons: these run millions of times). With
+  // grouping on there is no such rule: both supports can come from one group (Zyra into Brand).
+  const allDistinct = groupMode() ? () => true : (first, second, third, fourth) => first !== second && first !== third && second !== third
     && (fourth === undefined || (fourth !== first && fourth !== second && fourth !== third));
 
   // The average lane (any pick of yours in the pool's role, weighted by pick share) is zero; the typical
@@ -899,7 +980,7 @@ function renderStatus() {
   const statusChips = [
     view ? [`Estimates for patch ${patchName}`, `Every edge is adjusted to patch ${patchName}. Earlier patches still count; the model learns how much each matchup shifted between patches.`] : null,
     [`Fit on ${formatInteger(fitGameCount)} games${view ? `, ${formatInteger(view.game_count)} ${regionLabel} Diamond+ games` : ""}`,
-      `The model is fit on all ${formatInteger(fitGameCount)}: every region, Diamond+ and Emerald, the newest games first (at most 800,000), with region, elo and patch corrections estimated on top, so they all sharpen the numbers you see. The ${regionLabel} Diamond+ games are the ones matching your filters: they feed the Raw WR and Games columns and the pick rates.${groupMode() ? " Grouping similar champions is on." : ""}`],
+      `The model is fit on all ${formatInteger(fitGameCount)}: every region, Diamond+ and Emerald, the newest games first (at most 800,000), with region, elo and patch corrections estimated on top, so they all sharpen the numbers you see. The ${regionLabel} Diamond+ games are the ones matching your filters: they feed the Raw WR and Games columns and the pick rates.${groupMode() ? " Grouping is on: a separate fit where each Champion Group was merged into one champion before fitting." : ""}`],
     [`Updated ${data.generated_at}`, ""],
   ].filter(Boolean);
   elements.statusLine.innerHTML = statusChips
@@ -943,6 +1024,7 @@ function renderDuoBanPickers() {
   elements.duoBanSupport.innerHTML = alphabeticalOptionHtml(data.supports.filter((supportId) => supportId !== state.duoBanBot), state.duoBanSupport);
 }
 function saveDuo() {
+  if (groupMode()) return;
   try { localStorage.setItem(DUO_STORAGE_KEY, JSON.stringify({ bot: state.duoBanBot, support: state.duoBanSupport })); } catch (error) { /* storage unavailable */ }
 }
 
@@ -954,7 +1036,7 @@ function renderPoolPicker() {
   const poolWord = roleWord(poolRole);
   elements.pickerLabel.textContent = `Your ${poolWord} pool`;
   const query = state.search.trim().toLowerCase();
-  const champions = pickerChampions(source, poolRole).filter(({ botId }) => !query || championName(botId).toLowerCase().includes(query));
+  const champions = pickerChampions(source, poolRole).filter(({ botId }) => !query || championLongName(botId).toLowerCase().includes(query));
   elements.pickerCount.textContent = `${pool.filter((championId) => idsForRole(source, poolRole).includes(championId)).length} in pool`;
   elements.grid.innerHTML = champions.map(({ botId, weight }) => `
     <button type="button" class="champion-button" data-champion="${botId}" aria-pressed="${pool.includes(botId)}" title="${escapeHtml(championName(botId))} · ${(weight * 100).toFixed(1)}% of ${poolRole === "support" ? "support" : "bot-lane"} picks · click to ${pool.includes(botId) ? "remove from" : "add to"} your pool">
@@ -983,7 +1065,7 @@ function renderDuoPickers() {
 
 // Champion <option>s sorted by name (dropdowns are for finding a champion you already know).
 function alphabeticalOptionHtml(championIds, selectedId, labelSuffix = "") {
-  return championIds.map((championId) => ({ id: championId, name: championName(championId) }))
+  return championIds.map((championId) => ({ id: championId, name: championLongName(championId) }))
     .sort((first, second) => first.name.localeCompare(second.name))
     .map((option) => `<option value="${option.id}" ${String(option.id) === String(selectedId) ? "selected" : ""}>${escapeHtml(option.name)}${labelSuffix}</option>`).join("");
 }
@@ -1063,10 +1145,10 @@ function renderSheet() {
   const partsText = isAdcSheet()
     ? `ADC strength, synergy with ${teammateName}, the matchup into ${enemyBotName} and how ${enemySupportName} plays into each ADC`
     : `support strength, synergy with ${teammateName}, the matchup into ${enemyBotName} and the matchup into ${enemySupportName}`;
-  const groupNote = groupMode() ? " Grouping is on: each matchup also learns from similar champions, as far as the data says they play alike." : "";
+  const groupNote = groupMode() ? " Grouping is on: every champion here is a Champion Group, fitted as if all its members were one champion (hover an icon for the members)." : "";
   const headHtml = `<div class="sheet-head">${focus.championId === null ? "" : `<img src="${iconPath(focus.championId)}" alt="">`}<div><h2>${ownSide} vs ${enemyBotName} + ${enemySupportName}</h2>
       <p class="sheet-meta">Your ${rowsWord} options for this lane, adding up ${partsText}.${unpickedNote}${intervalNote}${groupNote}</p>
-      ${!groupMode() && pooledAvailable() ? `<p class="duo-warning" role="note">Rare pairings have few games of their own, so their numbers lean on each champion's overall strength. Turn on <strong>grouping similar champions</strong> above for more statistical power.</p>` : ""}</div></div>`;
+      ${!groupMode() && groupsAvailable() ? `<p class="duo-warning" role="note">Rare pairings have few games of their own, so their numbers lean on each champion's overall strength. Turn on <strong>grouping similar champions</strong> above to treat each Champion Group as one champion, with all its members' games behind every number.</p>` : ""}</div></div>`;
   // Header labels are split onto two lines (first line, second line) to keep the columns narrow.
   const edgeHeaderLines = ["Edge vs", "average option"];
   const edgeHeader = edgeHeaderLines.join(" ");
@@ -1206,7 +1288,7 @@ function renderBlindSheet() {
       </tr></thead>
       <tbody>${banBody}</tbody>
     </table></div>
-    <p class="sheet-foot">Units: ${model.unit === "pp" ? "win-rate points" : model.unit}, for your side, relative to the average bot lane in this view. These are the model's point estimates without intervals, so picks or bans a few tenths apart are effectively tied. Pick order isn't in the data, so a lane counts the same whether the enemy counterpicked you or drew it by chance; the worst-${tailPercent}% average is what an unlucky (or counterpicking) draft costs you.${groupMode() ? " Grouping is on: each matchup also learns from similar champions' games, as far as the data says they play alike." : ""}</p>`;
+    <p class="sheet-foot">Units: ${model.unit === "pp" ? "win-rate points" : model.unit}, for your side, relative to the average bot lane in this view. These are the model's point estimates without intervals, so picks or bans a few tenths apart are effectively tied. Pick order isn't in the data, so a lane counts the same whether the enemy counterpicked you or drew it by chance; the worst-${tailPercent}% average is what an unlucky (or counterpicking) draft costs you.${groupMode() ? " Grouping is on: every champion here is a Champion Group, fitted as if all its members were one champion (hover an icon for the members)." : ""}</p>`;
 }
 
 // ---------------------------------------------------------------- duo bans
@@ -1300,7 +1382,7 @@ function renderDuoBanSheet() {
         <td data-column="blind-support-threats">${threatList(plan.laneSet.enemySupportThreats)}</td>
       </tr></tbody>
     </table></div>
-    <p class="sheet-foot">Units: ${model.unit === "pp" ? "win-rate points" : model.unit}, for your side, relative to the average bot lane in this view. These are point estimates without intervals, so bans a few hundredths apart are effectively tied. A frequent, mildly bad matchup can be a better ban than a rare, awful one; the worst-lanes table shows the awful ones regardless of how often they come up.${groupMode() ? " Grouping is on: each matchup also learns from similar champions' games, as far as the data says they play alike." : ""}</p>`;
+    <p class="sheet-foot">Units: ${model.unit === "pp" ? "win-rate points" : model.unit}, for your side, relative to the average bot lane in this view. These are point estimates without intervals, so bans a few hundredths apart are effectively tied. A frequent, mildly bad matchup can be a better ban than a rare, awful one; the worst-lanes table shows the awful ones regardless of how often they come up.${groupMode() ? " Grouping is on: every champion here is a Champion Group, fitted as if all its members were one champion (hover an icon for the members)." : ""}</p>`;
 }
 
 function duoBanExplanation(columnName) {
@@ -1382,7 +1464,7 @@ function columnExplanation(columnName) {
   const focus = laneFocus();
   const focusName = focus.championId === null ? null : championName(focus.championId);
   const pickedWho = { enemyBotIndex: "the enemy ADC", enemySupportIndex: "the enemy support", teammateIndex: `your ${teammateWord}` }[single ? single.slot : ""] || "";
-  const groupNote = groupMode() ? " Grouping is on: each matchup also learns from similar champions' games, as far as the data says they play alike." : "";
+  const groupNote = groupMode() ? " Grouping is on: every champion here is a Champion Group, fitted as if all its members were one champion (hover an icon for the members)." : "";
   const parts = isAdcSheet()
     ? "the ADC's overall strength, synergy with your support, the ADC-vs-ADC matchup and how the enemy support plays into this ADC"
     : "the support's overall strength, synergy with your ADC, the matchup into the enemy ADC and the support-vs-support matchup";
@@ -1421,7 +1503,7 @@ function positionTooltip(clientX, clientY) {
 function hideTooltip() { elements.tooltip.hidden = true; }
 
 function renderMethod() {
-  const winModel = data.models.win;
+  const winModel = championData.models.win;   // the method panel always describes the per-champion fit
   const priors = winModel.prior_sd_by_block;
   const toPoints = (logOdds) => (100 * (logistic(logOdds) - 0.5)).toFixed(2);
   // Prior spread of a counter within one region and elo: global part plus the sum-to-zero elo
@@ -1436,14 +1518,6 @@ function renderMethod() {
     [`±${toPoints(synergySpread)} pp`, "Typical size of support + own-ADC synergy (1 SD)"],
     [`${formatSigned(100 * (logistic(winModel.blue_side.estimate) - 0.5), 2)} pp`, "Blue-side advantage, all else equal"],
   ];
-  // From the pooled (grouping) fit: how much of a counter is shared across a group pair.
-  const pooledWinModel = pooledAvailable() ? data.pooled_models.win : null;
-  if (pooledWinModel && pooledWinModel.block_summary && pooledWinModel.block_summary.group_support_vs_bot) {
-    const pooledPriors = pooledWinModel.prior_sd_by_block;
-    const pooledGroupVariance = pooledPriors.group_support_vs_bot ** 2;
-    const sharedByGroups = pooledGroupVariance / (pooledGroupVariance + pooledPriors.support_vs_bot ** 2);
-    stats.splice(1, 0, [`${Math.round(100 * sharedByGroups)}%`, "Share of counter variation your Champion Groups explain (the rest is champion-specific), estimated from the data"]);
-  }
   document.getElementById("method-stats").innerHTML = stats.map(([value, label]) => `<div class="stat"><span class="stat-value">${value}</span><span class="stat-label">${label}</span></div>`).join("");
   // Per-game spread implied by the fitted variance components (not by the shrunk estimates, which
   // start near zero and only approach the true spread as data accumulates). Each game has ten
@@ -1510,10 +1584,8 @@ function syncFilterInputs() {
 
 function render() {
   if (!currentView()) state.region = "NA";
-  // The grouping switch exists only when the pooled fit was exported.
-  const groupsAvailable = pooledAvailable();
-  document.getElementById("detail-filter").hidden = !groupsAvailable;
-  if (!groupsAvailable) state.detail = "champions";
+  // The grouping switch exists only when the merged-groups fit was exported.
+  document.getElementById("detail-filter").hidden = !groupsAvailable();
   renderStatus();
   syncFilterInputs();
   renderPicker();
@@ -1544,7 +1616,7 @@ elements.grid.addEventListener("click", (event) => {
   renderSheet();
 });
 document.getElementById("detail-groups").addEventListener("change", (event) => {
-  state.detail = event.target.checked ? "groups" : "champions";
+  setDetail(event.target.checked ? "groups" : "champions");
   saveFilters();
   render();
 });
@@ -1720,13 +1792,19 @@ async function boot() {
   try {
     const response = await fetch("results.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`results.json returned ${response.status}`);
-    data = await response.json();
+    championData = await response.json();
   } catch (error) {
     elements.sheet.innerHTML = `<p class="loading">Couldn't load the matchup data (${escapeHtml(error.message)}). Reload the page to try again.</p>`;
     return;
   }
+  data = championData;
+  groupData = buildGroupData(championData);
   restoreFilters();
   if (!data.models[state.metric]) state.metric = "win";
+  // Saved picks are champions; a visit saved with grouping on maps them onto groups now.
+  const savedDetail = state.detail;
+  state.detail = "champions";
+  setDetail(savedDetail);
   render();
   renderMethod();
 }
