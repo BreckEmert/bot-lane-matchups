@@ -78,7 +78,73 @@ a { color: inherit; }
 .sheet-switch button { font: inherit; letter-spacing: inherit; color: var(--muted); background: none; border: 0; padding: 0; cursor: pointer; font-size: 0.55em; border-bottom: 2px solid transparent; }
 .sheet-switch button:hover { color: var(--ink); border-bottom-color: var(--accent); }
 .sheet-switch button[aria-pressed="true"] { color: var(--ink); font-size: 1em; cursor: default; border-bottom-color: transparent; order: -1; }
+/* While the calculator is open neither sheet title is current, so both read as links. */
+.sheet-switch.is-inactive button[aria-pressed="true"] { color: var(--muted); font-size: 0.55em; cursor: pointer; order: 0; }
+.sheet-switch.is-inactive button[aria-pressed="true"]:hover { color: var(--ink); border-bottom-color: var(--accent); }
 .dek { color: var(--ink-2); max-width: 62ch; margin-top: 8px; font-size: 15px; }
+
+/* ---------- build calculator switch: frosted, right-aligned ---------- */
+.masthead-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; margin-left: auto; text-align: right; }
+.calc-switch {
+  --frost: linear-gradient(100deg, #1d7fd1 0%, #3fb6d9 28%, #7a6cf0 55%, #2bb3a6 78%, #1d7fd1 100%);
+  font-family: var(--font-display); font-weight: 700; letter-spacing: 0.02em; line-height: 1;
+  font-size: clamp(24px, 3.2vw, 32px); background: none; border: 0; padding: 2px 0 4px; cursor: pointer;
+  border-bottom: 2px solid transparent; transition: font-size 160ms ease;
+}
+.calc-switch span {
+  background: var(--frost); background-size: 220% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 6px rgb(120 190 255 / 0.35));
+}
+.calc-switch:hover { border-bottom-color: #7fc8f0; }
+.calc-switch[aria-pressed="true"] { font-size: clamp(32px, 5vw, 46px); cursor: default; border-bottom-color: transparent; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .calc-switch { --frost: linear-gradient(100deg, #bfe9ff 0%, #7fd6ff 25%, #c4b5ff 50%, #8ff0e2 75%, #bfe9ff 100%); }
+}
+:root[data-theme="dark"] .calc-switch { --frost: linear-gradient(100deg, #bfe9ff 0%, #7fd6ff 25%, #c4b5ff 50%, #8ff0e2 75%, #bfe9ff 100%); }
+@media (prefers-reduced-motion: no-preference) {
+  .calc-switch span { animation: frost-shimmer 7s ease-in-out infinite; }
+  @keyframes frost-shimmer { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+}
+@media (max-width: 560px) { .masthead-side { align-items: flex-start; margin-left: 0; text-align: left; } }
+
+/* ---------- build calculator page ---------- */
+.calc-field { display: flex; flex-direction: column; gap: 4px; }
+.calc-field select, .calc-build select { padding: 7px 8px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); color: var(--ink); font: inherit; width: 100%; }
+.calc-hint { color: var(--muted); font-size: 12px; }
+.calc-ranks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.calc-ranks label { display: flex; flex-direction: column; gap: 2px; font-weight: 600; font-size: 12px; color: var(--ink-2); }
+.calc-ranks select { padding: 6px 4px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--panel); color: var(--ink); font: inherit; }
+.calc-group-title { font-size: 18px; margin-top: 8px; }
+#calc-controls { display: flex; flex-direction: column; gap: 12px; }
+#calc-controls .toggle { align-self: flex-start; }
+.calc-main { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.calc-topbar { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
+.calc-topbar .toggle { align-self: center; }
+.calc-builds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; }
+@media (max-width: 640px) { .calc-builds { grid-template-columns: minmax(0, 1fr); } }
+.calc-build { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.calc-build h3 { font-size: 20px; }
+.calc-build[style*="--series"] h3 { color: var(--series); }
+.calc-slots { display: flex; flex-direction: column; gap: 5px; }
+.calc-option { border-left: 3px solid var(--series); padding-left: 6px; }
+.calc-chart-title { font-size: 22px; }
+.calc-chart-frame { position: relative; background: var(--panel); border: 1px solid var(--rule); border-radius: var(--radius); padding: 8px; margin-top: 6px; }
+.calc-chart-frame svg { display: block; width: 100%; height: auto; }
+.calc-grid { stroke: var(--grid); stroke-width: 1; }
+.calc-tick { fill: var(--muted); font-size: 13px; font-family: var(--font-body); }
+.calc-axis-label { fill: var(--ink-2); font-size: 14px; font-family: var(--font-body); font-weight: 500; }
+.calc-hover-line { stroke: var(--baseline); stroke-width: 1; stroke-dasharray: 3 3; }
+.calc-tooltip { position: absolute; min-width: 180px; }
+.calc-breakdown summary { cursor: pointer; font-family: var(--font-display); font-weight: 700; font-size: 20px; }
+.calc-resist { max-width: 360px; margin-block: 10px; }
+.calc-breakdown-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.calc-breakdown-column { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 10px 12px; border-radius: var(--radius); }
+.calc-breakdown-column[style*="--series"] { background: color-mix(in srgb, var(--series) 8%, transparent); border-left: 3px solid var(--series); }
+.calc-breakdown-column[style*="--series"] h4 { color: var(--series); }
+.calc-breakdown-column h4 { margin: 0; font-size: 14px; }
+.calc-table { width: 100%; }
+.calc-summary { margin: 0; padding-left: 16px; color: var(--ink-2); font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }
 .status-line { display: flex; flex-wrap: wrap; gap: 6px; }
 .status-chip { background: var(--chip); color: var(--ink-2); border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 500; max-width: 100%; }
 .notice { margin-top: 16px; background: var(--notice-bg); color: var(--notice-ink); border-radius: var(--radius); padding: 10px 14px; font-size: 13px; max-width: 90ch; }
@@ -240,7 +306,10 @@ footer p { max-width: 95ch; }
         </h1>
         <p class="dek" id="sheet-dek">Which support to pick into an enemy ADC. Every number is adjusted for the rest of the draft, the enemy support, autofill, champion experience and elo, and comes with an honest interval.</p>
       </div>
-      <div class="status-line" id="status-line"></div>
+      <div class="masthead-side">
+        <button type="button" class="calc-switch" id="calc-switch" aria-pressed="false"><span>Build Calculator</span></button>
+        <div class="status-line" id="status-line"></div>
+      </div>
     </div>
     <p class="notice" id="preliminary-notice" hidden></p>
   </div>
@@ -312,6 +381,29 @@ footer p { max-width: 95ch; }
 
   <section class="sheet" id="sheet" aria-live="polite">
     <p class="loading">Loading matchup data…</p>
+  </section>
+</main>
+
+<main class="wrap layout" id="calculator" hidden aria-label="Build calculator">
+  <aside class="rail" aria-label="Champion and combo">
+    <div id="calc-controls"></div>
+  </aside>
+  <section class="calc-main">
+    <div class="calc-topbar">
+      <div class="segmented" role="radiogroup" aria-label="Mode">
+        <input type="radio" name="calc-mode" id="calc-mode-builds" value="builds" checked><label for="calc-mode-builds">Compare two builds</label>
+        <input type="radio" name="calc-mode" id="calc-mode-next" value="next"><label for="calc-mode-next">Compare what item to buy next</label>
+      </div>
+      <label class="toggle" title="Scale the pricier option down in proportion to how much more it costs, so the cheaper line is untouched and both are judged at the same gold."><input type="checkbox" id="calc-gold" role="switch"><span class="toggle-track" aria-hidden="true"></span><span>Control for gold cost</span></label>
+      <label class="toggle" title="Mid lane role quest completed (around level 11): +8% AP on every build. Its 8% bonus AD and the free Tier 3 boots are not modelled."><input type="checkbox" id="calc-quest" role="switch"><span class="toggle-track" aria-hidden="true"></span><span>Mid lane quest</span></label>
+    </div>
+    <div class="calc-builds" id="calc-builds"></div>
+    <div id="calc-chart"><p class="loading">Loading calculator…</p></div>
+    <details class="calc-breakdown" id="calc-breakdown">
+      <summary>Damage breakdown</summary>
+      <div id="calc-breakdown-body"></div>
+    </details>
+    <p class="sheet-foot" id="calc-data-note"></p>
   </section>
 </main>
 
@@ -1578,6 +1670,8 @@ function syncFilterInputs() {
   }
   document.getElementById("detail-groups").checked = state.detail === "groups";
   elements.sheetSwitch.querySelectorAll("button[data-sheet]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.sheet === state.sheet)));
+  // While the Build Calculator is open it owns the description and the tab title.
+  if (!document.getElementById("calculator").hidden) return;
   elements.sheetDek.textContent = SHEET_DEKS[state.sheet];
   document.title = isAdcSheet() ? "ADC Counter Sheet" : "Support Counter Sheet";
 }
@@ -1810,3 +1904,4 @@ async function boot() {
 }
 boot();
 </script>
+<script src="calculator.js?v=2026-11-25b"></script>
