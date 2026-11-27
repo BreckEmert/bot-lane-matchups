@@ -84,7 +84,11 @@ a { color: inherit; }
 .dek { color: var(--ink-2); max-width: 62ch; margin-top: 8px; font-size: 15px; }
 
 /* ---------- build calculator switch: frosted, right-aligned ---------- */
-.masthead-side { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; margin-left: auto; text-align: right; }
+/* The calculator switch shares the sheet titles' row and baseline, pushed to the right edge. */
+.masthead-main { flex: 1 1 100%; min-width: 0; }
+.title-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 24px; }
+.title-row .calc-switch { margin-left: auto; }
+.masthead-row > .status-line { margin-left: auto; justify-content: flex-end; }
 .calc-switch {
   --frost: linear-gradient(100deg, #1d7fd1 0%, #3fb6d9 28%, #7a6cf0 55%, #2bb3a6 78%, #1d7fd1 100%);
   font-family: var(--font-display); font-weight: 700; letter-spacing: 0.02em; line-height: 1;
@@ -106,7 +110,7 @@ a { color: inherit; }
   .calc-switch span { animation: frost-shimmer 7s ease-in-out infinite; }
   @keyframes frost-shimmer { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
 }
-@media (max-width: 560px) { .masthead-side { align-items: flex-start; margin-left: 0; text-align: left; } }
+@media (max-width: 560px) { .title-row .calc-switch { margin-left: 0; } }
 
 /* ---------- build calculator page ---------- */
 .calc-field { display: flex; flex-direction: column; gap: 4px; }
@@ -298,18 +302,18 @@ footer p { max-width: 95ch; }
 <header class="masthead">
   <div class="wrap">
     <div class="masthead-row">
-      <div>
+      <div class="masthead-main">
         <p class="eyebrow">Ranked Solo/Duo · bot lane</p>
-        <h1 class="sheet-switch" id="sheet-switch">
-          <button type="button" data-sheet="support" aria-pressed="true">Support Counter Sheet</button>
-          <button type="button" data-sheet="adc" aria-pressed="false">ADC Counter Sheet</button>
-        </h1>
+        <div class="title-row">
+          <h1 class="sheet-switch" id="sheet-switch">
+            <button type="button" data-sheet="support" aria-pressed="true">Support Counter Sheet</button>
+            <button type="button" data-sheet="adc" aria-pressed="false">ADC Counter Sheet</button>
+          </h1>
+          <button type="button" class="calc-switch" id="calc-switch" aria-pressed="false"><span>Build Calculator</span></button>
+        </div>
         <p class="dek" id="sheet-dek">Which support to pick into an enemy ADC. Every number is adjusted for the rest of the draft, the enemy support, autofill, champion experience and elo, and comes with an honest interval.</p>
       </div>
-      <div class="masthead-side">
-        <button type="button" class="calc-switch" id="calc-switch" aria-pressed="false"><span>Build Calculator</span></button>
-        <div class="status-line" id="status-line"></div>
-      </div>
+      <div class="status-line" id="status-line"></div>
     </div>
     <p class="notice" id="preliminary-notice" hidden></p>
   </div>
