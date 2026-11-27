@@ -72,12 +72,15 @@
 
   const MODE_BUILDS = "builds";
   const MODE_NEXT = "next";
-  const STORAGE_KEY = "buildCalculator.v1";
+  // v2: new defaults (Syndra QEWAR, ranks 5/3/1/2) replace settings saved under v1.
+  const STORAGE_KEY = "buildCalculator.v2";
+  const DEFAULT_CHAMPION = "Syndra";
 
   // ---------------------------------------------------------------- engine
   let abilityRowsByChampion = {};   // champ -> [{ability, rank, base, apRatio, adRatio, bonusAdRatio, damageType}]
   let itemByName = {};              // item name -> item row
-  let itemNamesByCost = [];         // "" first, then by Cost
+  let itemNamesByKind = { ad: [], ap: [] };   // A-Z; each slot offers an AD picker and an AP picker
+  let expectedGold = null;          // expected-gold.json: typical gold earned on reaching each level
 
   const clamp = (value, low, high) => Math.min(Math.max(value, low), high);
   const estimateBaseAd = (buildCost) =>
@@ -323,9 +326,9 @@
 
   // ---------------------------------------------------------------- UI state
   const calcState = {
-    champ: "",
-    combo: "QWR",
-    ranks: { Q: 0, W: 0, E: 0, R: 0 },
+    champ: DEFAULT_CHAMPION,
+    combo: "QEWAR",
+    ranks: { Q: 5, W: 3, E: 1, R: 2 },
     specialByChampion: {},   // champ -> {optionIndex: value}
     itemSpecial: {},         // item name -> value
     runes: {},               // rune name -> activations
@@ -405,8 +408,13 @@
     const [value, label] = Array.isArray(choice) ? choice : [choice, choice];
     return `<option value="${escapeText(value)}"${String(value) === String(current) ? " selected" : ""}>${escapeText(label)}</option>`;
   }).join("");
-  const itemSelect = (listName, slot, current) =>
-    `<select data-list="${listName}" data-slot="${slot}" aria-label="${listName} item ${slot + 1}">${optionTags(itemNamesByCost.map((name) => [name, name || "—"]), current)}</select>`;
+  // One slot = an AD picker and an AP picker side by side; whichever holds the slot's item shows it.
+  const itemSelect = (listName, slot, current) => `<div class="calc-slot-pair">${["ad", "ap"].map((kind) => {
+    const names = itemNamesByKind[kind];
+    const shown = names.includes(current) ? current : "";
+    return `<select data-list="${listName}" data-slot="${slot}" aria-label="${listName} item ${slot + 1}, ${kind.toUpperCase()} items">${
+      optionTags([["", `— ${kind.toUpperCase()}`], ...names.map((name) => [name, name])], shown)}</select>`;
+  }).join("")}</div>`;
 
   function renderControls() {
     const champ = calcState.champ;
@@ -447,23 +455,46 @@
 
   function buildCaption(build) { return `${(build.ap * build.apMult).toFixed(0)} AP · ${build.cost.toFixed(0)} gold`; }
 
-  function renderBuilds(builds, baselineBuild) {
+  // Shop price of the build against the gold a typical player of this champion has earned on reaching
+  // this level (median of recent Diamond+ games). Red: the build needs a gold lead. Green: it fits.
+  function goldWarning(names, championLevel) {
+    const champion = expectedGold?.champions?.[calcState.champ];
+    const buildItems = itemsFromNames(names);
+    if (!champion || championLevel < 1 || !buildItems.length) return "";
+    const price = buildItems.reduce((total, item) => total + (Number(item.Price) || 0), 0);
+    const typicalGold = champion.gold_by_level[championLevel - 1];
+    if (typicalGold == null) {
+      return `<p class="calc-hint">Too few ${escapeText(calcState.champ)} games reach level ${championLevel} for a typical-gold figure.</p>`;
+    }
+    const difference = price - typicalGold;
+    const isOver = difference > 0;
+    const format = (value) => Math.round(value).toLocaleString("en-US");
+    const tooltip = `Build price ${format(price)} gold vs ${format(typicalGold)} gold earned by a typical ${calcState.champ} ` +
+      `(${champion.position.toLowerCase()}) on reaching level ${championLevel}, the median of ${champion.games} recent Diamond+ games.`;
+    return `<p class="calc-gold-warning ${isOver ? "is-over" : "is-under"} tabular" title="${escapeText(tooltip)}">` +
+      `${isOver ? "▲" : "▼"} ${format(Math.abs(difference))} gold ${isOver ? "above" : "below"} a typical ${escapeText(calcState.champ)} at level ${championLevel}</p>`;
+  }
+
+  function renderBuilds(builds, baselineBuild, championLevel) {
     const container = document.getElementById("calc-builds");
     if (calcState.mode === MODE_BUILDS) {
       container.innerHTML = ["A", "B"].map((letter, index) => {
         const listName = letter === "A" ? "buildA" : "buildB";
         return `<div class="calc-build" style="--series:${SERIES_COLORS[index]}"><h3>Build ${letter}</h3>
           <div class="calc-slots">${calcState[listName].map((name, slot) => itemSelect(listName, slot, name)).join("")}</div>
-          <p class="calc-hint tabular">${buildCaption(builds[index][1])}</p></div>`;
+          <p class="calc-hint tabular">${buildCaption(builds[index][1])}</p>
+          ${goldWarning(calcState[listName], championLevel)}</div>`;
       }).join("");
     } else {
       container.innerHTML = `<div class="calc-build"><h3>Core build</h3>
           <div class="calc-slots">${calcState.core.map((name, slot) => itemSelect("core", slot, name)).join("")}</div>
-          <p class="calc-hint tabular">${buildCaption(baselineBuild)}</p></div>
+          <p class="calc-hint tabular">${buildCaption(baselineBuild)}</p>
+          ${goldWarning(calcState.core, championLevel)}</div>
         <div class="calc-build"><h3>Next item options</h3>
           <div class="calc-slots">${calcState.options.map((name, slot) =>
             `<div class="calc-option" style="--series:${SERIES_COLORS[slot]}">${itemSelect("options", slot, name)}</div>`).join("")}</div>
-          ${calcState.options.filter(Boolean).map((name) => `<p class="calc-hint tabular">${escapeText(name)}: ${Number(itemByName[name]?.Cost || 0).toFixed(0)} gold</p>`).join("")}</div>`;
+          ${calcState.options.filter(Boolean).map((name) => `<p class="calc-hint tabular">${escapeText(name)}: ${Number(itemByName[name]?.Cost || 0).toFixed(0)} gold</p>
+            ${goldWarning([...calcState.core, name], championLevel)}`).join("")}</div>`;
     }
   }
 
@@ -555,7 +586,9 @@
   }
 
   function renderCalculator() {
-    if (!calcState.champ || !abilityRowsByChampion[calcState.champ]) calcState.champ = Object.keys(abilityRowsByChampion).sort()[0] || "";
+    if (!calcState.champ || !abilityRowsByChampion[calcState.champ]) {
+      calcState.champ = abilityRowsByChampion[DEFAULT_CHAMPION] ? DEFAULT_CHAMPION : Object.keys(abilityRowsByChampion).sort()[0] || "";
+    }
     const setup = currentSetup();
     const { itemMultipliers, itemStackCounts } = itemOptionValues();
     const questApMult = calcState.midLaneQuest ? MID_LANE_QUEST_AP_MULT : 1;
@@ -575,7 +608,7 @@
     }
 
     renderControls();
-    renderBuilds(builds, baselineBuild);
+    renderBuilds(builds, baselineBuild, setup.championLevel);
     document.querySelectorAll('#calculator input[name="calc-mode"]').forEach((input) => { input.checked = input.value === calcState.mode; });
     document.getElementById("calc-gold").checked = calcState.controlForGold;
     document.getElementById("calc-quest").checked = calcState.midLaneQuest;
@@ -697,7 +730,15 @@
       });
     }
     itemByName = Object.fromEntries(payload.items.map((item) => [item.Item, item]));
-    itemNamesByCost = ["", ...[...payload.items].sort((first, second) => first.Cost - second.Cost).map((item) => item.Item)];
+    const isAdItem = (item) => Number(item.AD) > 0 || Number(item.CritChance) > 0 || Number(item.FlatArmorPen) > 0
+      || Number(item.PercentArmorPen) > 0 || ITEM_EXTRA_DAMAGE_TYPE[item.Item] === "physical";
+    const namesAtoZ = (items) => items.map((item) => item.Item).sort((first, second) => first.localeCompare(second));
+    itemNamesByKind = { ad: namesAtoZ(payload.items.filter(isAdItem)), ap: namesAtoZ(payload.items.filter((item) => !isAdItem(item))) };
+    // The gold warning is optional: the calculator works without it.
+    try {
+      const goldResponse = await fetch("expected-gold.json", { cache: "no-store" });
+      expectedGold = goldResponse.ok ? await goldResponse.json() : null;
+    } catch { expectedGold = null; }
     document.getElementById("calc-data-note").textContent = payload.note || "";
     loaded = true;
     return true;
