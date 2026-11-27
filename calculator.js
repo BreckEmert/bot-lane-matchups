@@ -72,14 +72,18 @@
 
   const MODE_BUILDS = "builds";
   const MODE_NEXT = "next";
-  // v2: new defaults (Syndra QEWAR, ranks 5/3/1/2) replace settings saved under v1.
-  const STORAGE_KEY = "buildCalculator.v2";
+  // v3: build slot 1 became boots-only and builds default to each champion's level-11 build,
+  // so settings saved under earlier keys are dropped.
+  const STORAGE_KEY = "buildCalculator.v3";
   const DEFAULT_CHAMPION = "Syndra";
 
   // ---------------------------------------------------------------- engine
   let abilityRowsByChampion = {};   // champ -> [{ability, rank, base, apRatio, adRatio, bonusAdRatio, damageType}]
   let itemByName = {};              // item name -> item row
-  let itemNamesByKind = { ad: [], ap: [] };   // A-Z; each slot offers an AD picker and an AP picker
+  let itemNamesByKind = { ad: [], ap: [], boots: [] };   // A-Z. Build slot 1 lists boots; the rest list AD | AP.
+  const FALLBACK_BOOTS = ["Sorcerer's Shoes", "Spellslinger's Shoes"];
+  const BUILD_LISTS = new Set(["buildA", "buildB", "core"]);
+  const isBootsSlot = (listName, slot) => BUILD_LISTS.has(listName) && slot === 0;
   let expectedGold = null;          // expected-gold.json: typical gold earned on reaching each level
 
   const clamp = (value, low, high) => Math.min(Math.max(value, low), high);
@@ -346,11 +350,26 @@
   function saveCalcState() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(calcState)); } catch { /* storage off: settings just don't persist */ }
   }
+  // Returns whether there were saved settings to restore.
   function restoreCalcState() {
     let saved = null;
     try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch { saved = null; }
-    if (!saved || typeof saved !== "object") return;
+    if (!saved || typeof saved !== "object") return false;
     for (const key of Object.keys(calcState)) if (key in saved) calcState[key] = saved[key];
+    return true;
+  }
+
+  // What a typical player of this champion has at level 11: its skill points, and its items in
+  // every build (Build A, Build B and the core build). The combo is left as typed.
+  function applyChampionDefaults(champ) {
+    const defaults = expectedGold?.champions?.[champ];
+    if (!defaults) return;
+    if (defaults.default_ranks) calcState.ranks = { ...defaults.default_ranks };
+    if (defaults.default_items) {
+      calcState.buildA = [...defaults.default_items];
+      calcState.buildB = [...defaults.default_items];
+      calcState.core = [...defaults.default_items];
+    }
   }
 
   const escapeText = (text) => String(text).replace(/[&<>"']/g, (character) =>
@@ -414,18 +433,25 @@
     <button type="button" class="item-picker-button" data-picker-list="${listName}" data-picker-slot="${slot}"
       aria-haspopup="listbox" aria-expanded="false" aria-label="${listName} item ${slot + 1}">${escapeText(current || "—")}</button></div>`;
 
-  function itemPickerTable(current) {
-    const adNames = itemNamesByKind.ad;
-    const apNames = itemNamesByKind.ap;
+  function itemPickerTable(current, bootsOnly) {
     const cell = (name) => (name
       ? `<td><button type="button" role="option" data-pick-item="${escapeText(name)}" aria-selected="${name === current}">${escapeText(name)}</button></td>`
       : `<td aria-hidden="true"></td>`);
+    const emptyRow = (columnSpan) =>
+      `<tr><td colspan="${columnSpan}"><button type="button" role="option" data-pick-item="" aria-selected="${!current}">— (empty slot)</button></td></tr>`;
+    if (bootsOnly) {
+      return `<div class="item-picker-list single-column" role="listbox">
+        <table><thead><tr><th>Boots</th></tr></thead>
+        <tbody>${emptyRow(1)}${itemNamesByKind.boots.map((name) => `<tr>${cell(name)}</tr>`).join("")}</tbody></table></div>`;
+    }
+    const adNames = itemNamesByKind.ad;
+    const apNames = itemNamesByKind.ap;
     // The shorter column is padded with blank cells so every row has both sides.
     const rowCount = Math.max(adNames.length, apNames.length);
     const rows = Array.from({ length: rowCount }, (_, index) => `<tr>${cell(adNames[index])}${cell(apNames[index])}</tr>`).join("");
     return `<div class="item-picker-list" role="listbox">
       <table><thead><tr><th>AD</th><th>AP</th></tr></thead>
-      <tbody><tr><td colspan="2"><button type="button" role="option" data-pick-item="" aria-selected="${!current}">— (empty slot)</button></td></tr>${rows}</tbody></table></div>`;
+      <tbody>${emptyRow(2)}${rows}</tbody></table></div>`;
   }
 
   function closeItemPicker() {
@@ -435,8 +461,9 @@
 
   function openItemPicker(button) {
     closeItemPicker();
-    const current = calcState[button.dataset.pickerList][Number(button.dataset.pickerSlot)];
-    button.insertAdjacentHTML("afterend", itemPickerTable(current));
+    const listName = button.dataset.pickerList;
+    const slot = Number(button.dataset.pickerSlot);
+    button.insertAdjacentHTML("afterend", itemPickerTable(calcState[listName][slot], isBootsSlot(listName, slot)));
     button.setAttribute("aria-expanded", "true");
     const list = button.nextElementSibling;
     // Open toward whichever side has room, so the right-hand build's list stays on screen.
@@ -687,7 +714,10 @@
     const section = root();
     section.addEventListener("change", (event) => {
       const input = event.target;
-      if (input.id === "calc-champ") calcState.champ = input.value;
+      if (input.id === "calc-champ") {
+        calcState.champ = input.value;
+        applyChampionDefaults(calcState.champ);
+      }
       else if (input.dataset.rank) calcState.ranks[input.dataset.rank] = Number(input.value);
       else if (input.dataset.champSpecial !== undefined) {
         const option = CHAMPION_SPECIAL_OPTIONS[calcState.champ][Number(input.dataset.champSpecial)];
@@ -807,12 +837,19 @@
     const isAdItem = (item) => Number(item.AD) > 0 || Number(item.CritChance) > 0 || Number(item.FlatArmorPen) > 0
       || Number(item.PercentArmorPen) > 0 || ITEM_EXTRA_DAMAGE_TYPE[item.Item] === "physical";
     const namesAtoZ = (items) => items.map((item) => item.Item).sort((first, second) => first.localeCompare(second));
-    itemNamesByKind = { ad: namesAtoZ(payload.items.filter(isAdItem)), ap: namesAtoZ(payload.items.filter((item) => !isAdItem(item))) };
-    // The gold warning is optional: the calculator works without it.
+    // expected-gold.json carries the gold warning, each champion's level-11 defaults and the boots list.
+    // It is optional: without it the calculator still works.
     try {
       const goldResponse = await fetch("expected-gold.json", { cache: "no-store" });
       expectedGold = goldResponse.ok ? await goldResponse.json() : null;
     } catch { expectedGold = null; }
+    const bootsNames = new Set(expectedGold?.boots || FALLBACK_BOOTS);
+    const isBoots = (item) => bootsNames.has(item.Item);
+    itemNamesByKind = {
+      boots: namesAtoZ(payload.items.filter(isBoots)),
+      ad: namesAtoZ(payload.items.filter((item) => !isBoots(item) && isAdItem(item))),
+      ap: namesAtoZ(payload.items.filter((item) => !isBoots(item) && !isAdItem(item))),
+    };
     document.getElementById("calc-data-note").textContent = payload.note || "";
     loaded = true;
     return true;
@@ -836,6 +873,11 @@
       document.getElementById("calc-chart").innerHTML = `<p class="loading">Couldn't load the calculator data (${escapeText(error.message)}). Reload the page to try again.</p>`;
       return;
     }
+    // A first visit starts from the default champion's typical level-11 build.
+    if (!hadSavedSettings && !firstVisitDefaultsApplied) {
+      applyChampionDefaults(calcState.champ);
+      firstVisitDefaultsApplied = true;
+    }
     renderCalculator();
   }
 
@@ -849,7 +891,8 @@
     if (typeof syncFilterInputs === "function") syncFilterInputs();
   }
 
-  restoreCalcState();
+  const hadSavedSettings = restoreCalcState();
+  let firstVisitDefaultsApplied = false;
   wireEvents();
   calculatorButton.addEventListener("click", () => { if (root().hidden) openCalculator(); });
   // Choosing either counter sheet leaves the calculator (the sheet's own handler switches sheets).
