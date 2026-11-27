@@ -84,15 +84,11 @@
   const FALLBACK_BOOTS = ["Sorcerer's Shoes", "Spellslinger's Shoes"];
   const BUILD_LISTS = new Set(["buildA", "buildB", "core"]);
   const isBootsSlot = (listName, slot) => BUILD_LISTS.has(listName) && slot === 0;
-  // Boots only the mid lane role quest can give, so holding them means the quest is done.
-  const QUEST_UPGRADED_BOOTS = new Set(["Spellslinger's Shoes"]);
-
-  // The quest toggle follows the boots: on when a build on screen holds upgraded boots, off otherwise.
-  // Called only when boots change, so a manual click on the toggle holds until the next boots change.
-  function syncQuestToBoots() {
-    const lists = calcState.mode === MODE_BUILDS ? ["buildA", "buildB"] : ["core"];
-    calcState.midLaneQuest = lists.some((listName) => QUEST_UPGRADED_BOOTS.has(calcState[listName][0]));
-  }
+  // The mid lane quest is per build, read from its boots slot: Spellslinger's Shoes only come from the
+  // quest, and the pseudo-item below stands for "quest done, no boots bought" (no stats, no gold).
+  const QUEST_WITHOUT_BOOTS = "Quest complete (no boots)";
+  const QUEST_BOOTS = new Set(["Spellslinger's Shoes", QUEST_WITHOUT_BOOTS]);
+  const questApMultFor = (buildNames) => (QUEST_BOOTS.has(buildNames[0]) ? MID_LANE_QUEST_AP_MULT : 1);
   let expectedGold = null;          // expected-gold.json: typical gold earned on reaching each level
 
   const clamp = (value, low, high) => Math.min(Math.max(value, low), high);
@@ -348,7 +344,6 @@
     pressTheAttack: false,
     mode: MODE_BUILDS,
     controlForGold: false,
-    midLaneQuest: false,
     buildA: Array(6).fill(""),
     buildB: Array(6).fill(""),
     core: Array(6).fill(""),
@@ -655,8 +650,8 @@
     }
     const setup = currentSetup();
     const { itemMultipliers, itemStackCounts } = itemOptionValues();
-    const questApMult = calcState.midLaneQuest ? MID_LANE_QUEST_AP_MULT : 1;
-    const summarize = (names) => summarizeBuild(itemsFromNames(names), itemMultipliers, itemStackCounts, setup.championLevel, questApMult);
+    // Each build gets the quest's +8% AP from its own boots slot (a next-item build from the core's).
+    const summarize = (names) => summarizeBuild(itemsFromNames(names), itemMultipliers, itemStackCounts, setup.championLevel, questApMultFor(names));
 
     let builds;
     let baselineBuild;
@@ -675,7 +670,9 @@
     renderBuilds(builds, baselineBuild, setup.championLevel);
     document.querySelectorAll('#calculator input[name="calc-mode"]').forEach((input) => { input.checked = input.value === calcState.mode; });
     document.getElementById("calc-gold").checked = calcState.controlForGold;
-    document.getElementById("calc-quest").checked = calcState.midLaneQuest;
+    // The quest switch is read-only now: it shows whether any build on screen has the quest.
+    const visibleBuildLists = calcState.mode === MODE_BUILDS ? [calcState.buildA, calcState.buildB] : [calcState.core];
+    document.getElementById("calc-quest").checked = visibleBuildLists.some((names) => questApMultFor(names) !== 1);
 
     const chart = document.getElementById("calc-chart");
     const breakdownSection = document.getElementById("calc-breakdown");
@@ -726,7 +723,6 @@
       if (input.id === "calc-champ") {
         calcState.champ = input.value;
         applyChampionDefaults(calcState.champ);
-        syncQuestToBoots();
       }
       else if (input.dataset.rank) calcState.ranks[input.dataset.rank] = Number(input.value);
       else if (input.dataset.champSpecial !== undefined) {
@@ -736,12 +732,8 @@
       } else if (input.dataset.itemSpecial) calcState.itemSpecial[input.dataset.itemSpecial] = Number(input.value);
       else if (input.dataset.rune) calcState.runes[input.dataset.rune] = Number(input.value);
       else if (input.id === "calc-pta") calcState.pressTheAttack = input.checked;
-      else if (input.name === "calc-mode") {
-        changeMode(input.value);
-        syncQuestToBoots();
-      }
+      else if (input.name === "calc-mode") changeMode(input.value);
       else if (input.id === "calc-gold") calcState.controlForGold = input.checked;
-      else if (input.id === "calc-quest") calcState.midLaneQuest = input.checked;
       else return;
       saveCalcState();
       renderCalculator();
@@ -755,7 +747,6 @@
         const listName = button.dataset.pickerList;
         const slot = Number(button.dataset.pickerSlot);
         calcState[listName][slot] = pick.dataset.pickItem;
-        if (isBootsSlot(listName, slot)) syncQuestToBoots();
         closeItemPicker();
         saveCalcState();
         renderCalculator();
@@ -823,8 +814,7 @@
   function breakdownInputs() {
     const setup = currentSetup();
     const { itemMultipliers, itemStackCounts } = itemOptionValues();
-    const questApMult = calcState.midLaneQuest ? MID_LANE_QUEST_AP_MULT : 1;
-    const summarize = (names) => summarizeBuild(itemsFromNames(names), itemMultipliers, itemStackCounts, setup.championLevel, questApMult);
+    const summarize = (names) => summarizeBuild(itemsFromNames(names), itemMultipliers, itemStackCounts, setup.championLevel, questApMultFor(names));
     if (calcState.mode === MODE_BUILDS) {
       return ["no items", summarizeBuild([]), [["Build A", summarize(calcState.buildA)], ["Build B", summarize(calcState.buildB)]]];
     }
@@ -859,8 +849,13 @@
     } catch { expectedGold = null; }
     const bootsNames = new Set(expectedGold?.boots || FALLBACK_BOOTS);
     const isBoots = (item) => bootsNames.has(item.Item);
+    // "Quest complete (no boots)": no stats and no price; it only turns the quest on for its build.
+    itemByName[QUEST_WITHOUT_BOOTS] = {
+      Item: QUEST_WITHOUT_BOOTS, Cost: 0, Price: 0, AP: 0, FlatPen: 0, PercentPen: 0, APMult: 1, DamageMult: 1,
+      ExtraDamage: 0, ExtraAPScaling: 0, AD: 0, CritChance: 0, CritDamage: 0, FlatArmorPen: 0, PercentArmorPen: 0,
+    };
     itemNamesByKind = {
-      boots: namesAtoZ(payload.items.filter(isBoots)),
+      boots: [...namesAtoZ(payload.items.filter(isBoots)), QUEST_WITHOUT_BOOTS],
       ad: namesAtoZ(payload.items.filter((item) => !isBoots(item) && isAdItem(item))),
       ap: namesAtoZ(payload.items.filter((item) => !isBoots(item) && !isAdItem(item))),
     };
@@ -890,7 +885,6 @@
     // A first visit starts from the default champion's typical level-11 build.
     if (!hadSavedSettings && !firstVisitDefaultsApplied) {
       applyChampionDefaults(calcState.champ);
-      syncQuestToBoots();
       firstVisitDefaultsApplied = true;
     }
     renderCalculator();

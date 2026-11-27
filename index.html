@@ -122,6 +122,8 @@ a { color: inherit; }
 .calc-group-title { font-size: 18px; margin-top: 8px; }
 #calc-controls { display: flex; flex-direction: column; gap: 12px; }
 #calc-controls .toggle { align-self: flex-start; }
+/* A read-only switch: the mid lane quest is set by each build's boots, not by clicking. */
+.toggle.is-automatic { cursor: help; opacity: 0.6; }
 .calc-main { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
 .calc-topbar { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; }
 .calc-topbar .toggle { align-self: center; }
@@ -420,7 +422,7 @@ footer p { max-width: 95ch; }
         <input type="radio" name="calc-mode" id="calc-mode-next" value="next"><label for="calc-mode-next">Compare what item to buy next</label>
       </div>
       <label class="toggle" title="Scale the pricier option down in proportion to how much more it costs, so the cheaper line is untouched and both are judged at the same gold."><input type="checkbox" id="calc-gold" role="switch"><span class="toggle-track" aria-hidden="true"></span><span>Control for gold cost</span></label>
-      <label class="toggle" title="Mid lane role quest completed (around level 11): +8% AP on every build. Turns on by itself when a build has Spellslinger's Shoes (the quest's upgraded boots) and off when none do; click to override. Its 8% bonus AD is not modelled."><input type="checkbox" id="calc-quest" role="switch"><span class="toggle-track" aria-hidden="true"></span><span>Mid lane quest</span></label>
+      <label class="toggle is-automatic" title="Set by each build's boots slot: a build with Spellslinger's Shoes (the quest's upgraded boots) or &quot;Quest complete (no boots)&quot; gets the mid lane quest's +8% AP. The switch shows whether any build here has it. Its 8% bonus AD is not modelled."><input type="checkbox" id="calc-quest" role="switch" disabled><span class="toggle-track" aria-hidden="true"></span><span>Mid lane quest</span></label>
     </div>
     <div class="calc-builds" id="calc-builds"></div>
     <div id="calc-chart"><p class="loading">Loading calculator…</p></div>
@@ -1929,4 +1931,4 @@ async function boot() {
 }
 boot();
 </script>
-<script src="calculator.js?v=2026-11-27d"></script>
+<script src="calculator.js?v=2026-11-27e"></script>
