@@ -670,10 +670,6 @@
     renderBuilds(builds, baselineBuild, setup.championLevel);
     document.querySelectorAll('#calculator input[name="calc-mode"]').forEach((input) => { input.checked = input.value === calcState.mode; });
     document.getElementById("calc-gold").checked = calcState.controlForGold;
-    // The quest switch is read-only now: it shows whether any build on screen has the quest.
-    const visibleBuildLists = calcState.mode === MODE_BUILDS ? [calcState.buildA, calcState.buildB] : [calcState.core];
-    document.getElementById("calc-quest").checked = visibleBuildLists.some((names) => questApMultFor(names) !== 1);
-
     const chart = document.getElementById("calc-chart");
     const breakdownSection = document.getElementById("calc-breakdown");
     if (!setup.combo.length) {
