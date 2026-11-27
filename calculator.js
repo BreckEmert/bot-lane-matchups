@@ -84,6 +84,15 @@
   const FALLBACK_BOOTS = ["Sorcerer's Shoes", "Spellslinger's Shoes"];
   const BUILD_LISTS = new Set(["buildA", "buildB", "core"]);
   const isBootsSlot = (listName, slot) => BUILD_LISTS.has(listName) && slot === 0;
+  // Boots only the mid lane role quest can give, so holding them means the quest is done.
+  const QUEST_UPGRADED_BOOTS = new Set(["Spellslinger's Shoes"]);
+
+  // The quest toggle follows the boots: on when a build on screen holds upgraded boots, off otherwise.
+  // Called only when boots change, so a manual click on the toggle holds until the next boots change.
+  function syncQuestToBoots() {
+    const lists = calcState.mode === MODE_BUILDS ? ["buildA", "buildB"] : ["core"];
+    calcState.midLaneQuest = lists.some((listName) => QUEST_UPGRADED_BOOTS.has(calcState[listName][0]));
+  }
   let expectedGold = null;          // expected-gold.json: typical gold earned on reaching each level
 
   const clamp = (value, low, high) => Math.min(Math.max(value, low), high);
@@ -717,6 +726,7 @@
       if (input.id === "calc-champ") {
         calcState.champ = input.value;
         applyChampionDefaults(calcState.champ);
+        syncQuestToBoots();
       }
       else if (input.dataset.rank) calcState.ranks[input.dataset.rank] = Number(input.value);
       else if (input.dataset.champSpecial !== undefined) {
@@ -726,7 +736,10 @@
       } else if (input.dataset.itemSpecial) calcState.itemSpecial[input.dataset.itemSpecial] = Number(input.value);
       else if (input.dataset.rune) calcState.runes[input.dataset.rune] = Number(input.value);
       else if (input.id === "calc-pta") calcState.pressTheAttack = input.checked;
-      else if (input.name === "calc-mode") changeMode(input.value);
+      else if (input.name === "calc-mode") {
+        changeMode(input.value);
+        syncQuestToBoots();
+      }
       else if (input.id === "calc-gold") calcState.controlForGold = input.checked;
       else if (input.id === "calc-quest") calcState.midLaneQuest = input.checked;
       else return;
@@ -742,6 +755,7 @@
         const listName = button.dataset.pickerList;
         const slot = Number(button.dataset.pickerSlot);
         calcState[listName][slot] = pick.dataset.pickItem;
+        if (isBootsSlot(listName, slot)) syncQuestToBoots();
         closeItemPicker();
         saveCalcState();
         renderCalculator();
@@ -876,6 +890,7 @@
     // A first visit starts from the default champion's typical level-11 build.
     if (!hadSavedSettings && !firstVisitDefaultsApplied) {
       applyChampionDefaults(calcState.champ);
+      syncQuestToBoots();
       firstVisitDefaultsApplied = true;
     }
     renderCalculator();
