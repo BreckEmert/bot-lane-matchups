@@ -408,13 +408,41 @@
     const [value, label] = Array.isArray(choice) ? choice : [choice, choice];
     return `<option value="${escapeText(value)}"${String(value) === String(current) ? " selected" : ""}>${escapeText(label)}</option>`;
   }).join("");
-  // One slot = an AD picker and an AP picker side by side; whichever holds the slot's item shows it.
-  const itemSelect = (listName, slot, current) => `<div class="calc-slot-pair">${["ad", "ap"].map((kind) => {
-    const names = itemNamesByKind[kind];
-    const shown = names.includes(current) ? current : "";
-    return `<select data-list="${listName}" data-slot="${slot}" aria-label="${listName} item ${slot + 1}, ${kind.toUpperCase()} items">${
-      optionTags([["", `— ${kind.toUpperCase()}`], ...names.map((name) => [name, name])], shown)}</select>`;
-  }).join("")}</div>`;
+  // One dropdown per slot. A native <select> can't lay its list out in columns, so this is a button
+  // styled like the other selects; it opens a list with AD items on the left and AP items on the right.
+  const itemSelect = (listName, slot, current) => `<div class="item-picker">
+    <button type="button" class="item-picker-button" data-picker-list="${listName}" data-picker-slot="${slot}"
+      aria-haspopup="listbox" aria-expanded="false" aria-label="${listName} item ${slot + 1}">${escapeText(current || "—")}</button></div>`;
+
+  function itemPickerTable(current) {
+    const adNames = itemNamesByKind.ad;
+    const apNames = itemNamesByKind.ap;
+    const cell = (name) => (name
+      ? `<td><button type="button" role="option" data-pick-item="${escapeText(name)}" aria-selected="${name === current}">${escapeText(name)}</button></td>`
+      : `<td aria-hidden="true"></td>`);
+    // The shorter column is padded with blank cells so every row has both sides.
+    const rowCount = Math.max(adNames.length, apNames.length);
+    const rows = Array.from({ length: rowCount }, (_, index) => `<tr>${cell(adNames[index])}${cell(apNames[index])}</tr>`).join("");
+    return `<div class="item-picker-list" role="listbox">
+      <table><thead><tr><th>AD</th><th>AP</th></tr></thead>
+      <tbody><tr><td colspan="2"><button type="button" role="option" data-pick-item="" aria-selected="${!current}">— (empty slot)</button></td></tr>${rows}</tbody></table></div>`;
+  }
+
+  function closeItemPicker() {
+    document.querySelectorAll(".item-picker-list").forEach((list) => list.remove());
+    document.querySelectorAll('.item-picker-button[aria-expanded="true"]').forEach((button) => button.setAttribute("aria-expanded", "false"));
+  }
+
+  function openItemPicker(button) {
+    closeItemPicker();
+    const current = calcState[button.dataset.pickerList][Number(button.dataset.pickerSlot)];
+    button.insertAdjacentHTML("afterend", itemPickerTable(current));
+    button.setAttribute("aria-expanded", "true");
+    const list = button.nextElementSibling;
+    // Open toward whichever side has room, so the right-hand build's list stays on screen.
+    if (button.getBoundingClientRect().left + list.offsetWidth > document.documentElement.clientWidth - 8) list.classList.add("align-right");
+    (list.querySelector('[aria-selected="true"]') || list.querySelector("button")).focus();
+  }
 
   function renderControls() {
     const champ = calcState.champ;
@@ -671,10 +699,56 @@
       else if (input.name === "calc-mode") changeMode(input.value);
       else if (input.id === "calc-gold") calcState.controlForGold = input.checked;
       else if (input.id === "calc-quest") calcState.midLaneQuest = input.checked;
-      else if (input.dataset.list) calcState[input.dataset.list][Number(input.dataset.slot)] = input.value;
       else return;
       saveCalcState();
       renderCalculator();
+    });
+
+    // Item dropdowns: the button opens the two-column list; a cell picks that item for the slot.
+    section.addEventListener("click", (event) => {
+      const pick = event.target.closest("[data-pick-item]");
+      if (pick) {
+        const button = pick.closest(".item-picker").querySelector(".item-picker-button");
+        const listName = button.dataset.pickerList;
+        const slot = Number(button.dataset.pickerSlot);
+        calcState[listName][slot] = pick.dataset.pickItem;
+        closeItemPicker();
+        saveCalcState();
+        renderCalculator();
+        document.querySelector(`.item-picker-button[data-picker-list="${listName}"][data-picker-slot="${slot}"]`)?.focus();
+        return;
+      }
+      const button = event.target.closest(".item-picker-button");
+      if (!button) return;
+      if (button.getAttribute("aria-expanded") === "true") closeItemPicker();
+      else openItemPicker(button);
+    });
+    document.addEventListener("click", (event) => { if (!event.target.closest(".item-picker")) closeItemPicker(); });
+    section.addEventListener("keydown", (event) => {
+      const list = event.target.closest(".item-picker-list");
+      if (!list) return;
+      if (event.key === "Escape") {
+        const button = list.previousElementSibling;
+        closeItemPicker();
+        button.focus();
+        return;
+      }
+      // Arrows move through the grid: up/down within a column, left/right across the middle line.
+      const moves = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+      if (!moves[event.key]) return;
+      event.preventDefault();
+      const rows = [...list.querySelectorAll("tbody tr")];
+      const cell = event.target.closest("td");
+      let rowIndex = rows.indexOf(cell.parentElement);
+      let columnIndex = cell.colSpan === 2 ? 0 : cell.cellIndex;
+      const [rowStep, columnStep] = moves[event.key];
+      for (let attempt = 0; attempt < rows.length; attempt++) {
+        rowIndex = clamp(rowIndex + rowStep, 0, rows.length - 1);
+        columnIndex = clamp(columnIndex + columnStep, 0, 1);
+        const target = rows[rowIndex].cells[Math.min(columnIndex, rows[rowIndex].cells.length - 1)]?.querySelector("button");
+        if (target) { target.focus(); return; }
+        if (!rowStep) return;   // a blank cell sideways: stay put
+      }
     });
     section.addEventListener("input", (event) => {
       const input = event.target;
